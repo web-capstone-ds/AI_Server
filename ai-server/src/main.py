@@ -12,6 +12,8 @@ import structlog
 setup_logging()
 logger = structlog.get_logger()
 
+from src.pipeline.jobs import job_tracker
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -34,12 +36,20 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("app_shutdown")
+    logger.info("app_shutdown_started")
+    
+    # 1. Stop scheduler
     try:
         report_scheduler.stop()
     except Exception as e:
         logger.warning("scheduler_stop_failed", error=str(e))
+    
+    # 2. Wait for background jobs (Task A6)
+    await job_tracker.wait_for_completion(timeout=20.0)
+    
+    # 3. Disconnect DB
     await db_pool.disconnect()
+    logger.info("app_shutdown_completed")
 
 app = FastAPI(
     title="DS Vision AI Server",

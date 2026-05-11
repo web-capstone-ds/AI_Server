@@ -1,29 +1,36 @@
+import asyncio
 import structlog
-from src.db.pool import db_pool
-from src.db.ingest_jobs import update_job_status
+from typing import Set
 
 logger = structlog.get_logger()
 
-async def process_batch_job(batch_id: str):
-    """
-    Main background worker entry point for a single batch.
-    Handles Chunking -> Embedding -> Vector storage.
-    """
-    logger.info("job_processing_started", batch_id=batch_id)
-    
-    async with db_pool.get_pool().acquire() as conn:
+class JobTracker:
+    def __init__(self):
+        self.active_jobs: Set[str] = set()
+        self._all_jobs_done = asyncio.Event()
+        self._all_jobs_done.set()
+
+    def add_job(self, batch_id: str):
+        self.active_jobs.add(batch_id)
+        self._all_jobs_done.clear()
+        logger.debug("job_tracked", batch_id=batch_id, active_count=len(self.active_jobs))
+
+    def remove_job(self, batch_id: str):
+        if batch_id in self.active_jobs:
+            self.active_jobs.remove(batch_id)
+        if not self.active_jobs:
+            self._all_jobs_done.set()
+        logger.debug("job_untracked", batch_id=batch_id, active_count=len(self.active_jobs))
+
+    async def wait_for_completion(self, timeout: float = 30.0):
+        if not self.active_jobs:
+            return
+        
+        logger.info("waiting_for_jobs_completion", count=len(self.active_jobs))
         try:
-            await update_job_status(conn, batch_id, "PROCESSING")
-            
-            # 1. Fetch raw payload (could be passed directly for efficiency if calling from ingest)
-            # In A1, we simulate the work
-            logger.info("job_simulating_work", batch_id=batch_id)
-            
-            # TODO: Task A2 logic goes here
-            
-            await update_job_status(conn, batch_id, "COMPLETED")
-            logger.info("job_processing_completed", batch_id=batch_id)
-            
-        except Exception as e:
-            logger.error("job_processing_failed", batch_id=batch_id, error=str(e))
-            await update_job_status(conn, batch_id, "FAILED", error=str(e))
+            await asyncio.wait_for(self._all_jobs_done.wait(), timeout=timeout)
+            logger.info("all_jobs_completed")
+        except asyncio.TimeoutError:
+            logger.warning("shutdown_timeout_reached", active_jobs=list(self.active_jobs))
+
+job_tracker = JobTracker()
