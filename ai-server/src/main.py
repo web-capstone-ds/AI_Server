@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from src.config import settings
 from src.utils.logging_config import setup_logging
 from src.db.pool import db_pool
-from src.api import ingest, health, batches
+from src.api import ingest, health, batches, query, report
 from src.pipeline.embedder import embedder
 from src.scheduler.report_scheduler import report_scheduler
 import structlog
@@ -53,10 +53,9 @@ app.include_router(health.router)
 # Task A1: Placeholder for Batches API (KPI source)
 app.include_router(batches.router)
 
-# Note: query and report routers will be added in A3/A4
-# from src.api import query, report
-# app.include_router(query.router)
-# app.include_router(report.router)
+# AI Query and Report API
+app.include_router(query.router)
+app.include_router(report.router)
 
 if __name__ == "__main__":
     import uvicorn
