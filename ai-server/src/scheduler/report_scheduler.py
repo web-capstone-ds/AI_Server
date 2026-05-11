@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,22 +14,39 @@ class ReportScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
 
-    async def push_report_to_backend(self, report):
+    async def push_report_to_backend(self, report, max_retries: int = 3):
         """
-        Push the generated report to Web Backend.
+        Push the generated report to Web Backend with retries.
         """
         url = f"{settings.BACKEND_SERVER_URL}/api/reports"
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # In a real app, include JWT auth header
-                response = await client.post(url, json=report.model_dump())
-                if response.is_success:
-                    logger.info("report_pushed_successfully", report_id=report.reportId)
-                    return True
-                else:
-                    logger.error("report_push_failed", status=response.status_code, body=response.text)
-        except Exception as e:
-            logger.error("report_push_exception", error=str(e))
+        
+        # In a real app, generate a proper JWT for the backend
+        headers = {
+            "Authorization": f"Bearer system-token", # Placeholder
+            "Content-Type": "application/json"
+        }
+        
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                logger.info("pushing_report_to_backend", report_id=report.reportId, attempt=attempt + 1)
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(url, json=report.model_dump(), headers=headers)
+                    if response.is_success:
+                        logger.info("report_pushed_successfully", report_id=report.reportId)
+                        return True
+                    else:
+                        logger.error("report_push_failed", 
+                                     status=response.status_code, 
+                                     body=response.text, 
+                                     attempt=attempt + 1)
+            except Exception as e:
+                logger.error("report_push_exception", error=str(e), attempt=attempt + 1)
+            
+            attempt += 1
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt) # Exponential backoff
+        
         return False
 
     async def run_daily_report(self):

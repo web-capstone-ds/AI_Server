@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime
 import asyncpg
 from src.models.report import AnalysisReport
@@ -14,18 +15,18 @@ async def save_report(conn: asyncpg.Connection, report: AnalysisReport):
     """
     await conn.execute(
         query,
-        report.reportId,
+        uuid.UUID(report.reportId),
         report.reportType,
-        datetime.fromisoformat(report.period.start),
-        datetime.fromisoformat(report.period.end),
-        json.dumps(report.model_dump(), default=str),
-        datetime.fromisoformat(report.generatedAt)
+        datetime.fromisoformat(report.period.start.replace("Z", "+00:00")),
+        datetime.fromisoformat(report.period.end.replace("Z", "+00:00")),
+        report.model_dump_json(),
+        datetime.fromisoformat(report.generatedAt.replace("Z", "+00:00"))
     )
     logger.info("report_saved_to_db", report_id=report.reportId)
 
 async def mark_report_pushed(conn: asyncpg.Connection, report_id: str):
     query = "UPDATE analysis_reports SET pushed_to_backend = TRUE WHERE report_id = $1"
-    await conn.execute(query, report_id)
+    await conn.execute(query, uuid.UUID(report_id))
 
 async def get_latest_report(conn: asyncpg.Connection, report_type: str):
     query = "SELECT content FROM analysis_reports WHERE report_type = $1 ORDER BY generated_at DESC LIMIT 1"

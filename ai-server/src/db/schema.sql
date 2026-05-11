@@ -56,3 +56,17 @@ CREATE INDEX IF NOT EXISTS idx_lot_embeddings_equipment
 
 CREATE INDEX IF NOT EXISTS idx_lot_embeddings_vector
     ON lot_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+CREATE TABLE IF NOT EXISTS analysis_reports (
+    id                  BIGSERIAL       PRIMARY KEY,
+    report_id           UUID            NOT NULL UNIQUE,
+    report_type         TEXT            NOT NULL, -- 'daily', 'weekly'
+    period_start        TIMESTAMPTZ     NOT NULL,
+    period_end          TIMESTAMPTZ     NOT NULL,
+    content             JSONB           NOT NULL,
+    pushed_to_backend   BOOLEAN         NOT NULL DEFAULT FALSE,
+    generated_at        TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_analysis_reports_type_date
+    ON analysis_reports (report_type, generated_at DESC);

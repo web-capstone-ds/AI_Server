@@ -5,7 +5,7 @@ import asyncpg
 from src.db.pool import db_pool
 from src.llm.client import llm_client
 from src.llm.prompts import REPORT_SYSTEM_PROMPT
-from src.models.report import AnalysisReport, ReportMetrics, Insight
+from src.models.report import AnalysisReport, ReportMetrics, Insight, RecipeMetric, EquipmentMetric
 import structlog
 
 logger = structlog.get_logger()
@@ -14,7 +14,8 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     """
     Aggregates metrics from ingest_batches for the given period.
     """
-    query = """
+    # 1. Production Summary
+    prod_query = """
     SELECT 
         COUNT(*) as total_lots,
         AVG((lot_summary->>'yield_pct')::float) as avg_yield,
@@ -25,25 +26,60 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     FROM ingest_batches
     WHERE dispatched_at BETWEEN $1 AND $2
     """
-    row = await conn.fetchrow(query, start_time, end_time)
+    prod_row = await conn.fetchrow(prod_query, start_time, end_time)
     
-    # In a real app, we'd do more complex sub-queries for recipeBreakdown, etc.
-    # For now, we populate with placeholders or simplified logic
+    # 2. Recipe Breakdown
+    recipe_query = """
+    SELECT 
+        lot_summary->>'recipe_id' as recipe_id,
+        AVG((lot_summary->>'yield_pct')::float) as avg_yield,
+        COUNT(*) as total_lots
+    FROM ingest_batches
+    WHERE dispatched_at BETWEEN $1 AND $2
+    GROUP BY recipe_id
+    """
+    recipe_rows = await conn.fetch(recipe_query, start_time, end_time)
+    
+    # 3. Equipment Breakdown
+    equip_query = """
+    SELECT 
+        equipment_id,
+        AVG((lot_summary->>'yield_pct')::float) as avg_yield,
+        AVG((lot_summary->>'total_units')::float / NULLIF((lot_summary->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+    FROM ingest_batches
+    WHERE dispatched_at BETWEEN $1 AND $2
+    GROUP BY equipment_id
+    """
+    equip_rows = await conn.fetch(equip_query, start_time, end_time)
     
     return ReportMetrics(
-        totalLots=row['total_lots'] or 0,
-        avgYieldPct=row['avg_yield'] or 0,
-        minYieldPct=row['min_yield'] or 0,
-        maxYieldPct=row['max_yield'] or 0,
-        totalFailCount=row['total_fail'] or 0,
-        avgUph=row['avg_uph'] or 0,
-        topFailReasons=[],
-        recipeBreakdown=[],
+        totalLots=prod_row['total_lots'] or 0,
+        avgYieldPct=prod_row['avg_yield'] or 0,
+        minYieldPct=prod_row['min_yield'] or 0,
+        maxYieldPct=prod_row['max_yield'] or 0,
+        totalFailCount=prod_row['total_fail'] or 0,
+        avgUph=prod_row['avg_uph'] or 0,
+        topFailReasons=[], # Would require deep dive into records_summary
+        recipeBreakdown=[
+            RecipeMetric(
+                recipe_id=r['recipe_id'], 
+                avgYieldPct=r['avg_yield'], 
+                totalLots=r['total_lots']
+            ) for r in recipe_rows if r['recipe_id']
+        ],
         judgmentDistribution={},
         marginalCount=0,
-        avgAvailabilityPct=95.0,
-        totalDowntimeMin=60.0,
-        equipmentBreakdown=[]
+        avgAvailabilityPct=98.5, # Dummy for now
+        totalDowntimeMin=15.0, # Dummy for now
+        avgMtbfHours=120.0, # Dummy for now
+        equipmentBreakdown=[
+            EquipmentMetric(
+                equipmentId=e['equipment_id'],
+                avgYieldPct=e['avg_yield'],
+                avgUph=e['avg_uph'],
+                alarmCount=0
+            ) for e in equip_rows if e['equipment_id']
+        ]
     )
 
 async def generate_periodic_report(report_type: str, days: int) -> AnalysisReport:
