@@ -1,0 +1,24 @@
+# 1. 보안 (절대 올라가면 안 됨)
+.env
+
+# 2. 가상환경
+.venv/
+venv/
+env/
+
+# 3. 파이썬 및 캐시 찌꺼기
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 4. OS 및 에디터 찌꺼기
+.vscode/
+.idea/
+.DS_Store   
+
+# 5. 로그 및 데이터 (AI 모델 쓸 때 생기는 찌꺼기 방지)
+*.log
+logs/
+data/
+*.egg-info/
