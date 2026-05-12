@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS ingest_batches (
     payload_raw     JSONB           NOT NULL,
     records_summary JSONB           NOT NULL,
     dispatched_at   TIMESTAMPTZ     NOT NULL,
-    ingested_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    ingested_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    pushed_to_backend BOOLEAN         NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS ingest_jobs (

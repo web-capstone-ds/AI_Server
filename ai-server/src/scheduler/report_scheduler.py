@@ -22,7 +22,7 @@ class ReportScheduler:
         
         # In a real app, generate a proper JWT for the backend
         headers = {
-            "Authorization": f"Bearer system-token", # Placeholder
+            "Authorization": f"Bearer {settings.BACKEND_SERVICE_TOKEN}",
             "Content-Type": "application/json"
         }
         
