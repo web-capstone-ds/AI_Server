@@ -16,68 +16,167 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     """
     # 1. Production Summary
     prod_query = """
-    SELECT 
+    SELECT
         COUNT(*) as total_lots,
-        AVG((lot_summary->>'yield_pct')::float) as avg_yield,
-        MIN((lot_summary->>'yield_pct')::float) as min_yield,
-        MAX((lot_summary->>'yield_pct')::float) as max_yield,
-        SUM((lot_summary->>'fail_count')::int) as total_fail,
-        AVG((lot_summary->>'total_units')::float / NULLIF((lot_summary->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+        AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
+        MIN((payload_raw->'lotSummary'->>'yield_pct')::float) as min_yield,
+        MAX((payload_raw->'lotSummary'->>'yield_pct')::float) as max_yield,
+        SUM((payload_raw->'lotSummary'->>'fail_count')::int) as total_fail,
+        AVG(
+            (payload_raw->'lotSummary'->>'total_units')::float
+            / NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600
+        ) as avg_uph
     FROM ingest_batches
     WHERE dispatched_at BETWEEN $1 AND $2
     """
     prod_row = await conn.fetchrow(prod_query, start_time, end_time)
-    
+
     # 2. Recipe Breakdown
     recipe_query = """
-    SELECT 
-        lot_summary->>'recipe_id' as recipe_id,
-        AVG((lot_summary->>'yield_pct')::float) as avg_yield,
+    SELECT
+        payload_raw->'lotSummary'->>'recipe_id' as recipe_id,
+        AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
         COUNT(*) as total_lots
     FROM ingest_batches
     WHERE dispatched_at BETWEEN $1 AND $2
     GROUP BY recipe_id
     """
     recipe_rows = await conn.fetch(recipe_query, start_time, end_time)
-    
-    # 3. Equipment Breakdown
+
+    # 3. Equipment base metrics (yield, uph)
     equip_query = """
-    SELECT 
+    SELECT
         equipment_id,
-        AVG((lot_summary->>'yield_pct')::float) as avg_yield,
-        AVG((lot_summary->>'total_units')::float / NULLIF((lot_summary->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+        AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
+        AVG(
+            (payload_raw->'lotSummary'->>'total_units')::float
+            / NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600
+        ) as avg_uph
     FROM ingest_batches
     WHERE dispatched_at BETWEEN $1 AND $2
     GROUP BY equipment_id
     """
     equip_rows = await conn.fetch(equip_query, start_time, end_time)
-    
+
+    # 4. Oracle judgment distribution + marginal count
+    oracle_dist_query = """
+    SELECT
+        payload_raw->'oracleAnalysis'->0->>'judgment' as judgment,
+        COUNT(*) as cnt
+    FROM ingest_batches
+    WHERE dispatched_at BETWEEN $1 AND $2
+        AND payload_raw->'oracleAnalysis'->0->>'judgment' IS NOT NULL
+    GROUP BY judgment
+    """
+    oracle_rows = await conn.fetch(oracle_dist_query, start_time, end_time)
+    judgment_dist = {r['judgment']: r['cnt'] for r in oracle_rows}
+
+    marginal_query = """
+    SELECT COUNT(*) as cnt
+    FROM ingest_batches
+    WHERE dispatched_at BETWEEN $1 AND $2
+        AND (
+            payload_raw->'oracleAnalysis'->0->'violated_rules'->>'yield_grade' = 'MARGINAL'
+            OR payload_raw->'oracleAnalysis'->0->>'judgment' = 'WARNING'
+        )
+    """
+    marginal_row = await conn.fetchrow(marginal_query, start_time, end_time)
+
+    # 5. Availability & downtime from statusHistory (time-weighted, per batch)
+    avail_query = """
+    WITH sh AS (
+        SELECT
+            batch_id,
+            equipment_id,
+            (rec->>'equipment_status') as status,
+            (rec->>'time')::timestamptz as ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY batch_id, equipment_id
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_ts
+        FROM ingest_batches,
+        jsonb_array_elements(payload_raw->'statusHistory') as rec
+        WHERE dispatched_at BETWEEN $1 AND $2
+    ),
+    batch_totals AS (
+        SELECT
+            SUM(CASE WHEN status = 'RUN' AND next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as run_sec,
+            SUM(CASE WHEN next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as total_sec,
+            SUM(CASE WHEN status = 'STOP' AND next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as stop_sec
+        FROM sh
+    )
+    SELECT
+        ROUND(
+            100.0 * run_sec / NULLIF(total_sec, 0),
+            2
+        ) as avg_availability_pct,
+        stop_sec / 60.0 as total_downtime_min
+    FROM batch_totals
+    """
+    avail_row = await conn.fetchrow(avail_query, start_time, end_time)
+
+    # 6. MTBF from alarmHistory (avg interval between alarms per equipment)
+    mtbf_query = """
+    WITH ah AS (
+        SELECT
+            equipment_id,
+            (rec->>'time')::timestamptz as alarm_ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY equipment_id
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_alarm_ts
+        FROM ingest_batches,
+        jsonb_array_elements(payload_raw->'alarmHistory') as rec
+        WHERE dispatched_at BETWEEN $1 AND $2
+    )
+    SELECT AVG(EXTRACT(EPOCH FROM (next_alarm_ts - alarm_ts)) / 3600.0) as avg_mtbf_hours
+    FROM ah
+    WHERE next_alarm_ts IS NOT NULL
+    """
+    mtbf_row = await conn.fetchrow(mtbf_query, start_time, end_time)
+
+    # 7. Alarm count per equipment
+    alarm_query = """
+    SELECT
+        equipment_id,
+        COUNT(rec) as alarm_count
+    FROM ingest_batches,
+    jsonb_array_elements(payload_raw->'alarmHistory') as rec
+    WHERE dispatched_at BETWEEN $1 AND $2
+    GROUP BY equipment_id
+    """
+    alarm_rows = await conn.fetch(alarm_query, start_time, end_time)
+    alarm_by_equip = {r['equipment_id']: r['alarm_count'] for r in alarm_rows}
+
     return ReportMetrics(
         totalLots=prod_row['total_lots'] or 0,
-        avgYieldPct=prod_row['avg_yield'] or 0,
-        minYieldPct=prod_row['min_yield'] or 0,
-        maxYieldPct=prod_row['max_yield'] or 0,
+        avgYieldPct=prod_row['avg_yield'] or 0.0,
+        minYieldPct=prod_row['min_yield'] or 0.0,
+        maxYieldPct=prod_row['max_yield'] or 0.0,
         totalFailCount=prod_row['total_fail'] or 0,
-        avgUph=prod_row['avg_uph'] or 0,
-        topFailReasons=[], # Would require deep dive into records_summary
+        avgUph=prod_row['avg_uph'] or 0.0,
+        topFailReasons=[],
         recipeBreakdown=[
             RecipeMetric(
-                recipe_id=r['recipe_id'], 
-                avgYieldPct=r['avg_yield'], 
+                recipe_id=r['recipe_id'],
+                avgYieldPct=r['avg_yield'] or 0.0,
                 totalLots=r['total_lots']
             ) for r in recipe_rows if r['recipe_id']
         ],
-        judgmentDistribution={},
-        marginalCount=0,
-        avgAvailabilityPct=98.5, # Dummy for now
-        totalDowntimeMin=15.0, # Dummy for now
-        avgMtbfHours=120.0, # Dummy for now
+        judgmentDistribution=judgment_dist,
+        marginalCount=marginal_row['cnt'] or 0,
+        avgAvailabilityPct=float(avail_row['avg_availability_pct'] or 0.0),
+        totalDowntimeMin=float(avail_row['total_downtime_min'] or 0.0),
+        avgMtbfHours=float(mtbf_row['avg_mtbf_hours']) if mtbf_row['avg_mtbf_hours'] else None,
         equipmentBreakdown=[
             EquipmentMetric(
                 equipmentId=e['equipment_id'],
-                avgYieldPct=e['avg_yield'],
-                avgUph=e['avg_uph'],
-                alarmCount=0
+                avgYieldPct=e['avg_yield'] or 0.0,
+                avgUph=e['avg_uph'] or 0.0,
+                alarmCount=alarm_by_equip.get(e['equipment_id'], 0)
             ) for e in equip_rows if e['equipment_id']
         ]
     )

@@ -49,7 +49,7 @@ async def ingest_batch(
             logger.error("ingest_storage_failed", batch_id=batch_id_str, error=str(e))
             raise HTTPException(status_code=500, detail="Database storage failed")
 
-    # 4. Enqueue background processing
-    background_tasks.add_task(process_batch_job, batch_id_str)
+    # 4. Enqueue background processing (pass parsed batch to avoid re-deserialization risk)
+    background_tasks.add_task(process_batch_job, batch_id_str, batch)
     
     return IngestResponse(status="accepted", batchId=batch_id_str)

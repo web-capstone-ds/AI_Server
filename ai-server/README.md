@@ -8,7 +8,7 @@
 - **Framework**: FastAPI
 - **Database**: PostgreSQL 16 + pgvector
 - **Embedding**: `intfloat/multilingual-e5-small` (384차원, CPU 로컬 실행)
-- **LLM**: Anthropic Claude 3.5 Sonnet
+- **LLM**: Anthropic Claude Sonnet 4.6 (`claude-sonnet-4-6`)
 - **Scheduler**: APScheduler (일별/주간 보고서)
 
 ## 주요 API
@@ -23,15 +23,21 @@
    ```bash
    docker-compose up -d
    ```
-3. DB 초기 스키마를 적용합니다:
+3. DB 마이그레이션을 적용합니다:
    ```bash
-   psql -h localhost -U ai_server -d ai_server -f src/db/schema.sql
+   alembic upgrade head
    ```
 
 ## 로컬 개발
 ```bash
 # 의존성 설치
 pip install -e .[dev]
+
+# DB 실행 (Docker)
+docker-compose up pgvector -d
+
+# DB 마이그레이션
+alembic upgrade head
 
 # 서버 실행
 uvicorn src.main:app --reload

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_report_generator.py -v)",
+      "PowerShell(Get-ChildItem \"C:\\\\Hansung_Project\\\\WebCapstone\\\\AI_Server\\\\ai-server\" -Name | Where-Object { $_ -match \"venv|env|\\\\.venv\" })",
+      "PowerShell(py *)"
+    ]
+  }
+}

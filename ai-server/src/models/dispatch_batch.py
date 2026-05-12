@@ -41,6 +41,7 @@ class AnonymizedInspectionRecord(BaseExtraModel):
 class AnonymizedLotRecord(BaseExtraModel):
     lotHash: str
     equipmentHash: str
+    equipmentId: Optional[str] = None
     lot_status: str
     recipe_id: str
     total_units: int
@@ -58,7 +59,7 @@ class OracleAnalysisRecord(BaseExtraModel):
     yield_actual: Optional[float] = None
     yield_pct: Optional[float] = None
     ai_comment: Optional[str] = None
-    violated_rules: Optional[Dict[str, Any]] = None
+    violated_rules: Optional[List[Dict[str, Any]]] = None
     isolation_forest_score: Optional[float] = None
     threshold_proposal: Optional[Dict[str, Any]] = None
     analysis_source: Optional[str] = None
