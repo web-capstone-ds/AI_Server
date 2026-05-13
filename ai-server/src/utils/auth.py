@@ -7,7 +7,7 @@ import structlog
 logger = structlog.get_logger()
 security = HTTPBearer()
 
-async def verify_ingest_api_key(x_api_key: str = Header(...)):
+async def verify_ingest_api_key(x_api_key: str = Header(..., alias="X-Api-Key")):
     if x_api_key != settings.AI_INGEST_API_KEY:
         logger.warning("invalid_ingest_api_key")
         raise HTTPException(status_code=401, detail="Invalid API Key")
