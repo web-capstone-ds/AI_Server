@@ -17,9 +17,6 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir .
 
-# Pre-download the embedding model into HF_HOME so the image layer has it
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
-
 # Copy source code and migration files
 COPY src/ ./src/
 COPY alembic/ ./alembic/
