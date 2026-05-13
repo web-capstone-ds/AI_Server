@@ -196,9 +196,10 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
             # We expect the LLM to return a JSON string that fits our Insight/Recommendation schema
             # We'll use a simpler prompt for this example and manually wrap if needed
             llm_response = await llm_client.get_completion(REPORT_SYSTEM_PROMPT, user_prompt)
+            # Remove markdown code fences if present
+            cleaned_response = re.sub(r"```json\s?|```", "", llm_response).strip()
             # Try to parse JSON from LLM response
-            # Note: In production, use more robust JSON extraction
-            ai_data = json.loads(llm_response)
+            ai_data = json.loads(cleaned_response)
         except Exception as e:
             logger.error("report_ai_analysis_failed", error=str(e))
             ai_data = {
