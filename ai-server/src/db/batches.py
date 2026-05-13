@@ -156,6 +156,39 @@ async def aggregate_kpi_summary(
     FROM latest_status
     """
     equip_row = await conn.fetchrow(equip_query, *params)
+
+    # 4. Availability & Downtime (Detailed aggregation)
+    avail_query = f"""
+    WITH sh AS (
+        SELECT
+            batch_id,
+            equipment_id,
+            (rec->>'equipment_status') as status,
+            (rec->>'time')::timestamptz as ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY batch_id, equipment_id
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_ts
+        FROM ingest_batches,
+        jsonb_array_elements(payload_raw->'statusHistory') as rec
+        {where_sql}
+    ),
+    totals AS (
+        SELECT
+            SUM(CASE WHEN status = 'RUN' AND next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as run_sec,
+            SUM(CASE WHEN next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as total_sec,
+            SUM(CASE WHEN status = 'STOP' AND next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as stop_sec
+        FROM sh
+    )
+    SELECT
+        ROUND(100.0 * run_sec / NULLIF(total_sec, 0), 2) as avg_availability_pct,
+        stop_sec / 60.0 as total_downtime_min
+    FROM totals
+    """
+    avail_row = await conn.fetchrow(avail_query, *params)
     
     return {
         "totalUnits": base_row["total_units"] or 0,
@@ -168,8 +201,8 @@ async def aggregate_kpi_summary(
         "warningCount": oracle_row["warning_count"] or 0,
         "activeEquipmentCount": equip_row["active_equip_count"] or 0,
         "totalEquipmentCount": equip_row["total_equip_count"] or 0,
-        "avgAvailabilityPct": 0.0, # Placeholder for A3
-        "totalDowntimeMin": 0.0, # Placeholder for A3
+        "avgAvailabilityPct": float(avail_row["avg_availability_pct"] or 0.0),
+        "totalDowntimeMin": float(avail_row["total_downtime_min"] or 0.0),
         "topFailReasons": [],
         "equipmentDetails": [],
     }

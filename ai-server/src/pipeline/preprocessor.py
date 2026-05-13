@@ -1,4 +1,5 @@
 from typing import Dict, Any
+from datetime import datetime
 import numpy as np
 from src.models.dispatch_batch import DispatchBatch
 import structlog
@@ -71,17 +72,37 @@ def aggregate_availability_stats(batch: DispatchBatch) -> Dict[str, Any]:
     if not batch.statusHistory:
         return {}
     
-    total_uptime = sum(s.uptime_sec for s in batch.statusHistory)
-    status_durations: Dict[str, int] = {}
+    # 1. Sort history by time and normalize datetime
+    history = []
     for s in batch.statusHistory:
-        status_durations[s.equipment_status] = status_durations.get(s.equipment_status, 0) + s.uptime_sec
+        t = s.time
+        if isinstance(t, str):
+            t = datetime.fromisoformat(t)
+        history.append((t, s.equipment_status))
+    
+    history.sort(key=lambda x: x[0])
+
+    # 2. Accumulate durations between consecutive events
+    # Last record is ignored as it has no next event to define a duration
+    status_durations = {"RUN": 0.0, "STOP": 0.0, "IDLE": 0.0}
+    for i in range(len(history) - 1):
+        curr_time, curr_status = history[i]
+        next_time, _ = history[i+1]
         
-    run_time = status_durations.get("RUN", 0)
-    availability = (run_time / total_uptime * 100) if total_uptime > 0 else 0.0
+        duration = (next_time - curr_time).total_seconds()
+        if curr_status in status_durations:
+            status_durations[curr_status] += duration
+        else:
+            status_durations[curr_status] = status_durations.get(curr_status, 0.0) + duration
+
+    total_sec = sum(status_durations.values())
+    run_time = status_durations.get("RUN", 0.0)
+    availability = (run_time / total_sec * 100) if total_sec > 0 else 0.0
     
     return {
         "availability_pct": availability,
         "run_sec": run_time,
-        "stop_sec": status_durations.get("STOP", 0),
-        "idle_sec": status_durations.get("IDLE", 0)
+        "stop_sec": status_durations.get("STOP", 0.0),
+        "idle_sec": status_durations.get("IDLE", 0.0)
     }
+

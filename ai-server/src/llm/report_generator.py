@@ -1,11 +1,12 @@
 import json
+import re
 from uuid import uuid4
 from datetime import datetime, timedelta
 import asyncpg
 from src.db.pool import db_pool
 from src.llm.client import llm_client
 from src.llm.prompts import REPORT_SYSTEM_PROMPT
-from src.models.report import AnalysisReport, ReportMetrics, Insight, RecipeMetric, EquipmentMetric
+from src.models.report import AnalysisReport, ReportMetrics, Insight, RecipeMetric, EquipmentMetric, ReportPeriod
 import structlog
 
 logger = structlog.get_logger()
@@ -212,7 +213,7 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
             reportId=str(uuid4()),
             reportType=report_type,
             generatedAt=datetime.now().isoformat(),
-            period={"start": start_time.isoformat(), "end": end_time.isoformat()},
+            period=ReportPeriod(start=start_time.isoformat(), end=end_time.isoformat()),
             summary=ai_data.get("summary", ""),
             metrics=metrics,
             insights=[Insight(**i) for i in ai_data.get("insights", [])],
