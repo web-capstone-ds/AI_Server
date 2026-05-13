@@ -9,7 +9,7 @@ services:
       pgvector:
         condition: service_healthy
     volumes:
-      - model_cache:/app/model_cache
+      - model_cache:/root/.cache/huggingface
     deploy:
       resources:
         limits:
