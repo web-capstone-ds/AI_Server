@@ -159,7 +159,7 @@ async def aggregate_kpi_summary(
     
     return {
         "totalUnits": base_row["total_units"] or 0,
-        "totalInspected": (base_row["total_units"] or 0) - (base_row["total_fail"] or 0), # Simplified
+        "totalInspected": base_row["total_units"] or 0,
         "totalFail": base_row["total_fail"] or 0,
         "avgYieldPct": base_row["avg_yield_pct"] or 0.0,
         "avgUph": base_row["avg_uph"] or 0.0,

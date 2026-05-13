@@ -23,7 +23,7 @@ async def save_embeddings(
         batch_id, lot_hash, equipment_hash, equipment_id, recipe_id,
         chunk_type, chunk_text, embedding, yield_pct, lot_status,
         total_units, fail_count, dispatched_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, $10, $11, $12, $13)
     """
     
     ls = batch.lotSummary
