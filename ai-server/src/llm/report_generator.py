@@ -7,6 +7,7 @@ from src.db.pool import db_pool
 from src.llm.client import llm_client
 from src.llm.prompts import REPORT_SYSTEM_PROMPT
 from src.models.report import AnalysisReport, ReportMetrics, Insight, RecipeMetric, EquipmentMetric, ReportPeriod
+from src.models.kpi import FailReasonCount
 import structlog
 
 logger = structlog.get_logger()
@@ -31,6 +32,22 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     WHERE dispatched_at BETWEEN $1 AND $2
     """
     prod_row = await conn.fetchrow(prod_query, start_time, end_time)
+
+    # 1.1 Top Failure Reasons
+    fail_reason_query = """
+    SELECT
+        (rec->>'fail_reason_code') as reason_code,
+        COUNT(*) as count
+    FROM ingest_batches,
+    jsonb_array_elements(payload_raw->'records') as rec
+    WHERE (rec->>'fail_reason_code') IS NOT NULL
+      AND (rec->>'fail_reason_code') != 'null'
+      AND dispatched_at >= $1 AND dispatched_at <= $2
+    GROUP BY reason_code
+    ORDER BY count DESC
+    LIMIT 5
+    """
+    fail_reason_rows = await conn.fetch(fail_reason_query, start_time, end_time)
 
     # 2. Recipe Breakdown
     recipe_query = """
@@ -159,7 +176,10 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
         maxYieldPct=prod_row['max_yield'] or 0.0,
         totalFailCount=prod_row['total_fail'] or 0,
         avgUph=prod_row['avg_uph'] or 0.0,
-        topFailReasons=[],
+        topFailReasons=[
+            FailReasonCount(reason_code=r['reason_code'], count=r['count']) 
+            for r in fail_reason_rows
+        ],
         recipeBreakdown=[
             RecipeMetric(
                 recipe_id=r['recipe_id'],
@@ -198,7 +218,7 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
             # We'll use a simpler prompt for this example and manually wrap if needed
             llm_response = await llm_client.get_completion(REPORT_SYSTEM_PROMPT, user_prompt)
             # Remove markdown code fences if present
-            cleaned_response = re.sub(r"```json\s?|```", "", llm_response).strip()
+            cleaned_response = re.sub(r"```(?:json)?\s*", "", llm_response).strip()
             # Try to parse JSON from LLM response
             ai_data = json.loads(cleaned_response)
         except Exception as e:
