@@ -189,6 +189,69 @@ async def aggregate_kpi_summary(
     FROM totals
     """
     avail_row = await conn.fetchrow(avail_query, *params)
+
+    # 5. Top Failure Reasons
+    fail_where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
+    fail_query = f"""
+    SELECT
+        (rec->>'fail_reason_code') as reason_code,
+        COUNT(*) as count
+    FROM ingest_batches,
+    jsonb_array_elements(payload_raw->'records') as rec
+    WHERE (rec->>'fail_reason_code') IS NOT NULL
+      AND (rec->>'fail_reason_code') != 'null'
+    {fail_where_sql}
+    GROUP BY reason_code
+    ORDER BY count DESC
+    LIMIT 5
+    """
+    fail_rows = await conn.fetch(fail_query, *params)
+
+    # 6. Equipment Details
+    equip_detail_query = f"""
+    WITH latest AS (
+        SELECT DISTINCT ON (equipment_id)
+            equipment_id,
+            payload_raw->'statusHistory'->-1->>'equipment_status' as status
+        FROM ingest_batches
+        {where_sql}
+        ORDER BY equipment_id, dispatched_at DESC
+    ),
+    agg AS (
+        SELECT
+            equipment_id,
+            AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
+            SUM((payload_raw->'lotSummary'->>'total_units')::int) as total_units,
+            AVG((payload_raw->'lotSummary'->>'total_units')::float /
+                NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+        FROM ingest_batches
+        {where_sql}
+        GROUP BY equipment_id
+    )
+    SELECT a.equipment_id, a.avg_yield, a.total_units, a.avg_uph, COALESCE(l.status, 'UNKNOWN') as status
+    FROM agg a LEFT JOIN latest l USING (equipment_id)
+    """
+    equip_detail_rows = await conn.fetch(equip_detail_query, *params)
+    
+    # 7. MTBF Calculation
+    mtbf_query = f"""
+    WITH alarm_times AS (
+        SELECT
+            equipment_id,
+            (rec->>'time')::timestamptz as alarm_ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY equipment_id
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_alarm_ts
+        FROM ingest_batches,
+        jsonb_array_elements(payload_raw->'alarmHistory') as rec
+        {where_sql}
+    )
+    SELECT AVG(EXTRACT(EPOCH FROM (next_alarm_ts - alarm_ts)) / 3600.0) as avg_mtbf_hours
+    FROM alarm_times
+    WHERE next_alarm_ts IS NOT NULL
+    """
+    mtbf_row = await conn.fetchrow(mtbf_query, *params)
     
     return {
         "totalUnits": base_row["total_units"] or 0,
@@ -203,8 +266,17 @@ async def aggregate_kpi_summary(
         "totalEquipmentCount": equip_row["total_equip_count"] or 0,
         "avgAvailabilityPct": float(avail_row["avg_availability_pct"] or 0.0),
         "totalDowntimeMin": float(avail_row["total_downtime_min"] or 0.0),
-        "topFailReasons": [],
-        "equipmentDetails": [],
+        "avgMtbfHours": float(mtbf_row["avg_mtbf_hours"]) if mtbf_row and mtbf_row["avg_mtbf_hours"] else None,
+        "topFailReasons": [{"reason_code": r["reason_code"], "count": r["count"]} for r in fail_rows],
+        "equipmentDetails": [
+            {
+                "equipmentId": r["equipment_id"],
+                "avgYieldPct": r["avg_yield"] or 0.0,
+                "totalUnits": r["total_units"] or 0,
+                "avgUph": r["avg_uph"] or 0.0,
+                "status": r["status"]
+            } for r in equip_detail_rows
+        ],
     }
 
 async def get_latest_batches(
