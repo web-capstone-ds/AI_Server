@@ -14,8 +14,9 @@ async def test_generate_periodic_report_success():
         {'avg_availability_pct': 95.0, 'total_downtime_min': 30.0},
         {'avg_mtbf_hours': 48.0},
     ]
-    # fetch calls in order: recipe, equip, oracle_dist, alarm
+    # fetch calls in order: fail_reason, recipe, equip, oracle_dist, alarm
     mock_conn.fetch.side_effect = [
+        [{'reason_code': 'E001', 'count': 5}],
         [{'recipe_id': 'R1', 'avg_yield': 99.5, 'total_lots': 5}],
         [{'equipment_id': 'E1', 'avg_yield': 98.8, 'avg_uph': 1100.0}],
         [{'judgment': 'PASS', 'cnt': 8}, {'judgment': 'WARNING', 'cnt': 2}],
@@ -62,7 +63,7 @@ async def test_generate_periodic_report_llm_failure():
         {'avg_availability_pct': None, 'total_downtime_min': None},
         {'avg_mtbf_hours': None},
     ]
-    mock_conn.fetch.side_effect = [[], [], [], []]
+    mock_conn.fetch.side_effect = [[], [], [], [], []]
 
     with patch("src.db.pool.db_pool.get_pool") as mock_get_pool, \
          patch("src.llm.client.llm_client.get_completion", new_callable=AsyncMock) as mock_llm:
