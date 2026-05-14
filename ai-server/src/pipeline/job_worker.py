@@ -1,7 +1,9 @@
 import asyncio
 import json
 import structlog
+import httpx
 from typing import Optional
+from src.config import settings
 from src.models.dispatch_batch import DispatchBatch
 from src.db.pool import db_pool
 from src.db.ingest_jobs import update_job_status
@@ -14,6 +16,23 @@ logger = structlog.get_logger()
 
 # Limit background job concurrency as requested (concurrency 1~2)
 _job_semaphore = asyncio.Semaphore(2)
+
+async def _notify_backend(batch_id: str, batch: DispatchBatch):
+    backend_url = settings.BACKEND_SERVER_URL
+    if not backend_url:
+        return
+    payload = {
+        "batchId": batch_id,
+        "equipmentId": batch.equipmentId,
+        "yieldPct": batch.lotSummary.yield_pct if batch.lotSummary else None,
+        "judgment": batch.oracleAnalysis[0].judgment if batch.oracleAnalysis else None
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{backend_url}/api/batches/notify", json=payload)
+            resp.raise_for_status()
+    except Exception as e:
+        logger.warning("backend_notify_failed", batch_id=batch_id, error=str(e))
 
 async def get_batch_payload(batch_id: str) -> Optional[DispatchBatch]:
     """
@@ -70,6 +89,9 @@ async def process_batch_job(batch_id: str, batch: Optional[DispatchBatch] = None
                     
                     # 3. Vector DB storage
                     await save_embeddings(conn, batch, chunks, embeddings)
+                    
+                    # Notify web backend after processing is finished
+                    await _notify_backend(batch_id, batch)
                     
                     await update_job_status(conn, batch_id, "COMPLETED")
                     logger.info("job_processing_completed", batch_id=batch_id, chunk_count=len(chunks))
