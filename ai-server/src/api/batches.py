@@ -23,8 +23,11 @@ async def get_batches(
     List batches with filtering and pagination.
     """
     # Parse dates
-    start = datetime.fromisoformat(from_date) if from_date else None
-    end = datetime.fromisoformat(to_date) if to_date else None
+    try:
+        start = datetime.fromisoformat(from_date) if from_date else None
+        end = datetime.fromisoformat(to_date) if to_date else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
     offset = (page - 1) * size
     
     async with db_pool.get_pool().acquire() as conn:
@@ -52,8 +55,11 @@ async def get_kpi(
     """
     Aggregate production and operation KPIs.
     """
-    start = datetime.fromisoformat(from_date) if from_date else None
-    end = datetime.fromisoformat(to_date) if to_date else None
+    try:
+        start = datetime.fromisoformat(from_date) if from_date else None
+        end = datetime.fromisoformat(to_date) if to_date else None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
     
     async with db_pool.get_pool().acquire() as conn:
         kpi_data = await aggregate_kpi_summary(conn, equipmentId, start, end)

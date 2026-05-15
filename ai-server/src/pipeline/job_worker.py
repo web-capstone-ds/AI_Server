@@ -21,6 +21,13 @@ async def _notify_backend(batch_id: str, batch: DispatchBatch):
     backend_url = settings.BACKEND_SERVER_URL
     if not backend_url:
         return
+
+    headers = {"Content-Type": "application/json"}
+    if settings.BACKEND_SERVICE_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.BACKEND_SERVICE_TOKEN}"
+    else:
+        logger.warning("backend_service_token_missing", msg="Skipping Authorization header")
+
     payload = {
         "batchId": batch_id,
         "equipmentId": batch.equipmentId,
@@ -29,7 +36,7 @@ async def _notify_backend(batch_id: str, batch: DispatchBatch):
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(f"{backend_url}/api/batches/notify", json=payload)
+            resp = await client.post(f"{backend_url}/api/batches/notify", json=payload, headers=headers)
             resp.raise_for_status()
     except Exception as e:
         logger.warning("backend_notify_failed", batch_id=batch_id, error=str(e))

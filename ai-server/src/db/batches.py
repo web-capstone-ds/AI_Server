@@ -36,7 +36,12 @@ async def check_batch_id_exists(conn: asyncpg.Connection, batch_id: str) -> Opti
     return dict(row) if row else None
 
 async def get_batch_by_id(conn: asyncpg.Connection, batch_id: str) -> Optional[Dict[str, Any]]:
-    query = "SELECT * FROM ingest_batches WHERE batch_id = $1"
+    query = """
+    SELECT batch_id, lot_hash, equipment_hash, equipment_id, total_records, 
+           records_summary, dispatched_at, ingested_at, pushed_to_backend 
+    FROM ingest_batches 
+    WHERE batch_id = $1
+    """
     row = await conn.fetchrow(query, batch_id)
     return dict(row) if row else None
 

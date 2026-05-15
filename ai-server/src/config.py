@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # Anthropic API
     ANTHROPIC_API_KEY: str
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"  # Verify with Anthropic API before deploy
     ANTHROPIC_MAX_TOKENS: int = 4096
 
     # Embedding Model

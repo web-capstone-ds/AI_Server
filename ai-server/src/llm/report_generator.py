@@ -1,7 +1,7 @@
 import json
 import re
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncpg
 from src.db.pool import db_pool
 from src.llm.client import llm_client
@@ -203,7 +203,7 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     )
 
 async def generate_periodic_report(report_type: str, days: int) -> AnalysisReport:
-    end_time = datetime.now()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=days)
     
     async with db_pool.get_pool().acquire() as conn:
@@ -232,7 +232,7 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
         report = AnalysisReport(
             reportId=str(uuid4()),
             reportType=report_type,
-            generatedAt=datetime.now().isoformat(),
+            generatedAt=datetime.now(timezone.utc).isoformat(),
             period=ReportPeriod(start=start_time.isoformat(), end=end_time.isoformat()),
             summary=ai_data.get("summary", ""),
             metrics=metrics,

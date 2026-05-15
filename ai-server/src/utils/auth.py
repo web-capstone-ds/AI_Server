@@ -18,9 +18,13 @@ async def verify_backend_jwt(auth: HTTPAuthorizationCredentials = Depends(securi
         payload = jwt.decode(
             auth.credentials, 
             settings.BACKEND_JWT_SECRET, 
-            algorithms=["HS256"]
+            algorithms=["HS256"],
+            options={"require": ["exp", "iat"]}
         )
         return payload
+    except jwt.ExpiredSignatureError:
+        logger.warning("expired_backend_jwt")
+        raise HTTPException(status_code=401, detail="Token expired")
     except jwt.PyJWTError as e:
         logger.warning("invalid_backend_jwt", error=str(e))
         raise HTTPException(status_code=401, detail="Invalid token")

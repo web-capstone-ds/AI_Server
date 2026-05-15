@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y \
 # Explicit cache path — must match docker-compose volume mount
 ENV HF_HOME=/app/model_cache
 
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
 # Install python dependencies
 COPY pyproject.toml .
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
@@ -23,6 +26,10 @@ COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
+
+# Change ownership and switch user
+RUN chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8000
 

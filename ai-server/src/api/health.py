@@ -18,10 +18,10 @@ async def health_check():
         health_status["components"]["database"] = "healthy"
     except Exception as e:
         health_status["status"] = "unhealthy"
-        health_status["components"]["database"] = f"unhealthy: {str(e)}"
+        health_status["components"]["database"] = "unhealthy"
 
     # Check embedding model status
-    if embedder.model is not None:
+    if embedder.model is not None or embedder.ort_model is not None:
         health_status["components"]["embedding_model"] = "healthy"
     else:
         health_status["status"] = "unhealthy"
