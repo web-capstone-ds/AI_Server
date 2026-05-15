@@ -16,8 +16,8 @@ async def retrieve_relevant_chunks(
     """
     # 1. Generate query embedding
     query_vector = embedder.embed_query(query)
-    # Convert to list for asyncpg to handle casting to vector(384)
-    query_vector_list = query_vector.tolist()
+    # Convert to pgvector string format "[...]" for consistent handling
+    query_vector_str = f"[{','.join(map(str, query_vector.tolist()))}]"
     
     # 2. Build Query
     base_query = """
@@ -28,7 +28,7 @@ async def retrieve_relevant_chunks(
     """
     
     where_clauses = []
-    params: List[Any] = [query_vector_list]
+    params: List[Any] = [query_vector_str]
     
     if filters:
         if filters.get("equipmentId"):

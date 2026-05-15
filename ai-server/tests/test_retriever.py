@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from src.rag.retriever import retrieve_relevant_chunks
 
 @pytest.mark.asyncio

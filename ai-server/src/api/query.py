@@ -18,7 +18,7 @@ async def query_ai(
     request: QueryRequest,
     _ = Depends(verify_backend_jwt)
 ):
-    logger.info("query_received", question=request.question, filters=request.filters)
+    logger.info("query_received", question=request.question[:100], filters=request.filters)
     
     async with db_pool.get_pool().acquire() as conn:
         # 1. Retrieve relevant chunks from Vector DB

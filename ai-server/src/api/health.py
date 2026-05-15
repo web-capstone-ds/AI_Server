@@ -16,7 +16,7 @@ async def health_check():
         async with db_pool.get_pool().acquire() as conn:
             await conn.execute("SELECT 1")
         health_status["components"]["database"] = "healthy"
-    except Exception as e:
+    except Exception:
         health_status["status"] = "unhealthy"
         health_status["components"]["database"] = "unhealthy"
 

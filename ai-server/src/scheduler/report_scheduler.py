@@ -22,9 +22,12 @@ class ReportScheduler:
         
         # In a real app, generate a proper JWT for the backend
         headers = {
-            "Authorization": f"Bearer {settings.BACKEND_SERVICE_TOKEN}",
             "Content-Type": "application/json"
         }
+        if settings.BACKEND_SERVICE_TOKEN:
+            headers["Authorization"] = f"Bearer {settings.BACKEND_SERVICE_TOKEN}"
+        else:
+            logger.warning("backend_service_token_missing")
         
         attempt = 0
         while attempt < max_retries:

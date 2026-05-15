@@ -9,9 +9,11 @@ from unittest.mock import patch, MagicMock, AsyncMock
 client = TestClient(app)
 
 def create_test_jwt():
+    now = datetime.utcnow()
     payload = {
         "sub": "web-backend",
-        "exp": datetime.utcnow() + timedelta(hours=1)
+        "iat": now,
+        "exp": now + timedelta(hours=1)
     }
     return jwt.encode(payload, settings.BACKEND_JWT_SECRET, algorithm="HS256")
 

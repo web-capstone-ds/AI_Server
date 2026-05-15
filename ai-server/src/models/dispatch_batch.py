@@ -89,7 +89,6 @@ class AlarmHistoryRecord(BaseExtraModel):
     requires_manual_intervention: bool
     burst_id: Optional[str] = None
     burst_count: Optional[int] = None
-    payload_raw: Optional[Dict[str, Any]] = None
 
 class DispatchBatch(BaseExtraModel):
     batchId: uuid.UUID

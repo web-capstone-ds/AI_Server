@@ -1,6 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime
+from unittest.mock import AsyncMock, patch
 from src.llm.report_generator import generate_periodic_report
 from src.models.report import AnalysisReport
 

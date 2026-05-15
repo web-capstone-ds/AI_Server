@@ -1,6 +1,5 @@
 import pytest
 import time
-import asyncio
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
 from src.main import app

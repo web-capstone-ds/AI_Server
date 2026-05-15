@@ -6,13 +6,13 @@ from src.db.pool import db_pool
 from src.api import ingest, health, batches, query, report
 from src.pipeline.embedder import embedder
 from src.scheduler.report_scheduler import report_scheduler
+from src.pipeline.jobs import job_tracker
 import structlog
 
 # Initialize logging before everything else
 setup_logging()
 logger = structlog.get_logger()
 
-from src.pipeline.jobs import job_tracker
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

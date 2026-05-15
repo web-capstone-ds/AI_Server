@@ -42,3 +42,8 @@ alembic upgrade head
 # 서버 실행
 uvicorn src.main:app --reload
 ```
+
+## Repository Policy
+- **IMPORTANT**: Do not commit large assets or ZIP files (e.g., model weights, raw data) to the repository. These should be managed via external storage or downloaded during the build process.
+- Keep the repository clean of temporary files (cached in `.gitignore`).
+

@@ -1,24 +1,36 @@
-# 1. 보안 (절대 올라가면 안 됨)
+# 1. Security (Never commit these)
 .env
+.env.*
+!.env.example
 
-# 2. 가상환경
+# 2. Virtual Environment
 .venv/
 venv/
 env/
 
-# 3. 파이썬 및 캐시 찌꺼기
+# 3. Python and Cache
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.ruff_cache/
 
-# 4. OS 및 에디터 찌꺼기
+# 4. OS and Editor
 .vscode/
 .idea/
-.DS_Store   
+.DS_Store
+Thumbs.db
 
-# 5. 로그 및 데이터 (AI 모델 쓸 때 생기는 찌꺼기 방지)
+# 5. Logs and Data
 *.log
 logs/
+model_cache/
 data/
 *.egg-info/
+dist/
+build/
+
+# 6. Large Assets (Do not commit large ZIP files)
+*.zip
+*.tar.gz
+*.7z

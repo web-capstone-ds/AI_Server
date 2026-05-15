@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from src.main import app
 from src.utils.auth import verify_backend_jwt
 from anthropic import APITimeoutError

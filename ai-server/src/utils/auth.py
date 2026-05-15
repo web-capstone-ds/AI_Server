@@ -1,4 +1,5 @@
 import jwt
+import secrets
 from fastapi import Header, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from src.config import settings
@@ -8,7 +9,7 @@ logger = structlog.get_logger()
 security = HTTPBearer()
 
 async def verify_ingest_api_key(x_api_key: str = Header(..., alias="X-Api-Key")):
-    if x_api_key != settings.AI_INGEST_API_KEY:
+    if not secrets.compare_digest(x_api_key, settings.AI_INGEST_API_KEY):
         logger.warning("invalid_ingest_api_key")
         raise HTTPException(status_code=401, detail="Invalid API Key")
     return x_api_key
