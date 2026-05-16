@@ -10,7 +10,7 @@ class LLMClient:
         # Increased timeout for LLM calls
         self.client = AsyncAnthropic(
             api_key=settings.ANTHROPIC_API_KEY,
-            timeout=30.0 # 30 seconds timeout
+            timeout=120.0 # timeout
         )
         self.model = settings.ANTHROPIC_MODEL
 

@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from pydantic import BaseModel
 from src.models.kpi import ReportPeriod, FailReasonCount
 
@@ -36,7 +36,7 @@ class Insight(BaseModel):
     severity: str # info | warning | critical
     category: str # yield | quality | equipment | recipe
     message: str
-    evidence: List[str]
+    evidence: Union[List[str], str]
 
 class LotBrief(BaseModel):
     lotHash: str

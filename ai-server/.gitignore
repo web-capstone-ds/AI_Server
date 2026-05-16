@@ -29,6 +29,9 @@ data/
 *.egg-info/
 dist/
 build/
+daily-report-result.json
+query-result.json
+sample-batch.json
 
 # 6. Large Assets (Do not commit large ZIP files)
 *.zip

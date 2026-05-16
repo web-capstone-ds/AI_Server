@@ -35,7 +35,7 @@ async def query_ai(
         
         if not chunks:
             return QueryResponse(
-                answer="현재 등록된 데이터 중 분석 가능한 관련 정보를 찾을 수 없습니다. 조금 더 구체적으로 질문해 주시거나 다른 필터를 적용해 보세요.",
+                answer="현재 등록된 데이터 중 분석 가능한 관련 정보를 찾을 수 없습니다. 질문을 조금 더 구체적으로 작성하거나 다른 필터를 적용해 주세요.",
                 sources=[],
                 confidence=0.0
             )

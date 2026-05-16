@@ -27,6 +27,11 @@ COPY alembic.ini .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
+# Prepare cache directory for mounted model volume
+RUN mkdir -p /app/model_cache && chown -R appuser:appuser /app
+USER appuser
+
+
 # Change ownership and switch user
 RUN chown -R appuser:appuser /app
 USER appuser

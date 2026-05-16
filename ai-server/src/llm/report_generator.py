@@ -211,14 +211,17 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
         
         # Build prompt for LLM
         metrics_json = metrics.model_dump_json()
-        user_prompt = f"Analyze the following metrics for a {report_type} report and generate summary, insights, and recommendations in JSON format:\n{metrics_json}"
+        user_prompt = (
+            f'아래의 {report_type} 보고서용 지표 데이터를 분석하여 '
+            f'summary, insights, recommendations 필드를 포함한 JSON 형식으로 한국어 답변을 작성하세요:\n{metrics_json}'
+        )
         
         try:
             # We expect the LLM to return a JSON string that fits our Insight/Recommendation schema
             # We'll use a simpler prompt for this example and manually wrap if needed
             llm_response = await llm_client.get_completion(REPORT_SYSTEM_PROMPT, user_prompt)
             # Remove markdown code fences if present
-            cleaned_response = re.sub(r"```(?:json)?\s*", "", llm_response).strip()
+            cleaned_response = re.sub(r'```(?:json)?|```', '', llm_response).strip()
             # Try to parse JSON from LLM response
             ai_data = json.loads(cleaned_response)
         except Exception as e:
