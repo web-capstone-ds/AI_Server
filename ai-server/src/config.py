@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"  # Verify with Anthropic API before deploy
     ANTHROPIC_MAX_TOKENS: int = 4096
+    ANTHROPIC_TIMEOUT_SECONDS: float = 120.0
 
     # Embedding Model
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-small"

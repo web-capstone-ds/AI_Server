@@ -1,7 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from zoneinfo import ZoneInfo
 import uuid
+
+DEFAULT_LOCAL_TZ = ZoneInfo("Asia/Seoul")
 
 # Helper for status normalization
 def normalize_equipment_status(status: str) -> str:
@@ -13,6 +16,11 @@ def normalize_equipment_status(status: str) -> str:
     if s in ["STOP", "STOPPED", "DOWN"]:
         return "STOP"
     return s
+
+def normalize_datetime_to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=DEFAULT_LOCAL_TZ)
+    return value.astimezone(timezone.utc)
 
 class BaseExtraModel(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -37,6 +45,11 @@ class AnonymizedInspectionRecord(BaseExtraModel):
     bga: Optional[Dict[str, Any]] = None
     surface: Optional[Dict[str, Any]] = None
     singulation: Optional[Dict[str, Any]] = None
+
+    @field_validator("time", mode="after")
+    @classmethod
+    def normalize_time(cls, v: datetime) -> datetime:
+        return normalize_datetime_to_utc(v)
 
 class AnonymizedLotRecord(BaseExtraModel):
     lotHash: str
@@ -64,6 +77,11 @@ class OracleAnalysisRecord(BaseExtraModel):
     threshold_proposal: Optional[Dict[str, Any]] = None
     analysis_source: Optional[str] = None
 
+    @field_validator("time", mode="after")
+    @classmethod
+    def normalize_time(cls, v: datetime) -> datetime:
+        return normalize_datetime_to_utc(v)
+
 class StatusHistoryRecord(BaseExtraModel):
     time: datetime
     equipment_status: str
@@ -79,6 +97,11 @@ class StatusHistoryRecord(BaseExtraModel):
     def normalize_status(cls, v: str) -> str:
         return normalize_equipment_status(v)
 
+    @field_validator("time", mode="after")
+    @classmethod
+    def normalize_time(cls, v: datetime) -> datetime:
+        return normalize_datetime_to_utc(v)
+
 class AlarmHistoryRecord(BaseExtraModel):
     time: datetime
     alarm_level: str
@@ -89,6 +112,11 @@ class AlarmHistoryRecord(BaseExtraModel):
     requires_manual_intervention: bool
     burst_id: Optional[str] = None
     burst_count: Optional[int] = None
+
+    @field_validator("time", mode="after")
+    @classmethod
+    def normalize_time(cls, v: datetime) -> datetime:
+        return normalize_datetime_to_utc(v)
 
 class DispatchBatch(BaseExtraModel):
     batchId: uuid.UUID
@@ -102,6 +130,11 @@ class DispatchBatch(BaseExtraModel):
     oracleAnalysis: List[OracleAnalysisRecord] = Field(default_factory=list)
     statusHistory: List[StatusHistoryRecord] = Field(default_factory=list)
     alarmHistory: List[AlarmHistoryRecord] = Field(default_factory=list)
+
+    @field_validator("dispatchedAt", mode="after")
+    @classmethod
+    def normalize_dispatched_at(cls, v: datetime) -> datetime:
+        return normalize_datetime_to_utc(v)
 
 class IngestResponse(BaseModel):
     status: str

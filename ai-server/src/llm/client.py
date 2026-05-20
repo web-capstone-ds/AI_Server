@@ -7,10 +7,9 @@ logger = structlog.get_logger()
 
 class LLMClient:
     def __init__(self):
-        # Increased timeout for LLM calls
         self.client = AsyncAnthropic(
             api_key=settings.ANTHROPIC_API_KEY,
-            timeout=120.0 # timeout
+            timeout=settings.ANTHROPIC_TIMEOUT_SECONDS,
         )
         self.model = settings.ANTHROPIC_MODEL
 

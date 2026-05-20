@@ -212,10 +212,11 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
         # Build prompt for LLM
         metrics_json = metrics.model_dump_json()
         user_prompt = (
-            f'아래의 {report_type} 보고서용 지표 데이터를 분석하여 '
-            f'summary, insights, recommendations 필드를 포함한 JSON 형식으로 한국어 답변을 작성하세요:\n{metrics_json}'
+            f"아래 {report_type} 보고서용 지표 데이터를 분석해서 "
+            "summary, insights, recommendations 필드를 포함한 JSON 형식의 한국어 답변을 작성하세요.\n"
+            f"{metrics_json}"
         )
-        
+
         try:
             # We expect the LLM to return a JSON string that fits our Insight/Recommendation schema
             # We'll use a simpler prompt for this example and manually wrap if needed
@@ -227,7 +228,7 @@ async def generate_periodic_report(report_type: str, days: int) -> AnalysisRepor
         except Exception as e:
             logger.error("report_ai_analysis_failed", error=str(e))
             ai_data = {
-                "summary": "AI 분석 실패. 기본 통계 데이터만 제공됩니다.",
+                "summary": "AI 분석 실패. 기본 통계 데이터만 제공합니다.",
                 "insights": [],
                 "recommendations": []
             }
