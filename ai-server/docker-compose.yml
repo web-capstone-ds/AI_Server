@@ -23,8 +23,8 @@ services:
       POSTGRES_DB: ai_server
       POSTGRES_USER: ai_server
       POSTGRES_PASSWORD: ${PG_PASSWORD:-changeit}
-    expose:
-      - "5432"
+    ports:
+      - "5433:5432"
     volumes:
       - pgvector_data:/var/lib/postgresql/data
     healthcheck:
