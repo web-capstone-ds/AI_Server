@@ -18,7 +18,7 @@ class ReportScheduler:
         """
         Push the generated report to Web Backend with retries.
         """
-        url = f"{settings.BACKEND_SERVER_URL}/api/reports"
+        url = f"{settings.BACKEND_SERVER_URL}/api/v1/reports"
         
         # In a real app, generate a proper JWT for the backend
         headers = {
