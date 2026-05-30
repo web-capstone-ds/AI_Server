@@ -148,12 +148,12 @@ async def aggregate_kpi_summary(
     # Note: Simplified for A3. In real usage, we'd look at the latest batch's status history
     equip_query = f"""
     WITH latest_status AS (
-        SELECT DISTINCT ON (equipment_id) 
-            equipment_id,
+        SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
             payload_raw->'statusHistory'->-1->>'equipment_status' as last_status
         FROM ingest_batches
         {where_sql}
-        ORDER BY equipment_id, dispatched_at DESC
+        ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
     )
     SELECT 
         COUNT(*) as total_equip_count,
@@ -167,11 +167,11 @@ async def aggregate_kpi_summary(
     WITH sh AS (
         SELECT
             batch_id,
-            equipment_id,
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
             (rec->>'equipment_status') as status,
             (rec->>'time')::timestamptz as ts,
             LEAD((rec->>'time')::timestamptz) OVER (
-                PARTITION BY batch_id, equipment_id
+                PARTITION BY batch_id, COALESCE(equipment_id, equipment_hash)
                 ORDER BY (rec->>'time')::timestamptz
             ) as next_ts
         FROM ingest_batches,
@@ -215,26 +215,34 @@ async def aggregate_kpi_summary(
     # 6. Equipment Details
     equip_detail_query = f"""
     WITH latest AS (
-        SELECT DISTINCT ON (equipment_id)
-            equipment_id,
+        SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+            equipment_hash,
             payload_raw->'statusHistory'->-1->>'equipment_status' as status
         FROM ingest_batches
         {where_sql}
-        ORDER BY equipment_id, dispatched_at DESC
+        ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
     ),
     agg AS (
         SELECT
-            equipment_id,
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+            MIN(equipment_hash) as equipment_hash,
             AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
             SUM((payload_raw->'lotSummary'->>'total_units')::int) as total_units,
             AVG((payload_raw->'lotSummary'->>'total_units')::float /
                 NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
         FROM ingest_batches
         {where_sql}
-        GROUP BY equipment_id
+        GROUP BY COALESCE(equipment_id, equipment_hash)
     )
-    SELECT a.equipment_id, a.avg_yield, a.total_units, a.avg_uph, COALESCE(l.status, 'UNKNOWN') as status
-    FROM agg a LEFT JOIN latest l USING (equipment_id)
+    SELECT
+        a.equipment_key,
+        COALESCE(l.equipment_hash, a.equipment_hash) AS equipment_hash,
+        a.avg_yield,
+        a.total_units,
+        a.avg_uph,
+        COALESCE(l.status, 'UNKNOWN') as status
+    FROM agg a LEFT JOIN latest l USING (equipment_key)
     """
     equip_detail_rows = await conn.fetch(equip_detail_query, *params)
     
@@ -242,10 +250,10 @@ async def aggregate_kpi_summary(
     mtbf_query = f"""
     WITH alarm_times AS (
         SELECT
-            equipment_id,
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
             (rec->>'time')::timestamptz as alarm_ts,
             LEAD((rec->>'time')::timestamptz) OVER (
-                PARTITION BY equipment_id
+                PARTITION BY COALESCE(equipment_id, equipment_hash)
                 ORDER BY (rec->>'time')::timestamptz
             ) as next_alarm_ts
         FROM ingest_batches,
@@ -275,7 +283,8 @@ async def aggregate_kpi_summary(
         "topFailReasons": [{"reason_code": r["reason_code"], "count": r["count"]} for r in fail_rows],
         "equipmentDetails": [
             {
-                "equipmentId": r["equipment_id"],
+                "equipmentId": r["equipment_key"],
+                "equipmentHash": r["equipment_hash"],
                 "avgYieldPct": r["avg_yield"] or 0.0,
                 "totalUnits": r["total_units"] or 0,
                 "avgUph": r["avg_uph"] or 0.0,

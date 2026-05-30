@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     BACKEND_JWT_SECRET: str
     BACKEND_SERVICE_TOKEN: str = ""
     BACKEND_SERVER_URL: str = "http://web-backend:8080"
+    BACKEND_NOTIFY_ENABLED: bool = False
 
     # PostgreSQL + pgvector
     PG_HOST: str = "localhost"

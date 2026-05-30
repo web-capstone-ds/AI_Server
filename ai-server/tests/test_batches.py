@@ -52,7 +52,7 @@ async def test_kpi_summary_mock(mock_get_pool):
     ]
     mock_conn.fetch.side_effect = [
         [{"reason_code": "E001", "count": 10}],
-        [{"equipment_id": "EQ1", "avg_yield": 98.0, "total_units": 1000, "avg_uph": 120.0, "status": "RUN"}]
+        [{"equipment_key": "EQ1", "equipment_hash": "hash-eq1", "avg_yield": 98.0, "total_units": 1000, "avg_uph": 120.0, "status": "RUN"}]
     ]
     mock_pool = MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
@@ -70,6 +70,35 @@ async def test_kpi_summary_mock(mock_get_pool):
     assert data["topFailReasons"][0]["reason_code"] == "E001"
     assert len(data["equipmentDetails"]) == 1
     assert data["equipmentDetails"][0]["equipmentId"] == "EQ1"
+    assert data["equipmentDetails"][0]["equipmentHash"] == "hash-eq1"
+
+@pytest.mark.asyncio
+@patch("src.db.pool.db_pool.get_pool")
+async def test_kpi_summary_uses_equipment_hash_when_plain_id_is_null(mock_get_pool):
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.side_effect = [
+        {"total_lots": 1, "total_units": 100, "total_fail": 5, "avg_yield_pct": 95.0, "avg_uph": 400.0},
+        {"danger_count": 0, "warning_count": 1, "marginal_count": 1},
+        {"total_equip_count": 1, "active_equip_count": 1},
+        {"avg_availability_pct": 90.0, "total_downtime_min": 10.0},
+        {"avg_mtbf_hours": None}
+    ]
+    mock_conn.fetch.side_effect = [
+        [],
+        [{"equipment_key": "hash-only", "equipment_hash": "hash-only", "avg_yield": 98.0, "total_units": 1000, "avg_uph": 120.0, "status": "RUN"}]
+    ]
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_get_pool.return_value = mock_pool
+
+    token = create_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/api/batches/kpi-summary", headers=headers)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["equipmentDetails"][0]["equipmentId"] == "hash-only"
+    assert data["equipmentDetails"][0]["equipmentHash"] == "hash-only"
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")

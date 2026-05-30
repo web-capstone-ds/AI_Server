@@ -11,6 +11,7 @@ class FailReasonCount(BaseModel):
 
 class EquipmentKpi(BaseModel):
     equipmentId: str
+    equipmentHash: Optional[str] = None
     avgYieldPct: float
     totalUnits: int
     avgUph: float

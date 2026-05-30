@@ -18,6 +18,10 @@ logger = structlog.get_logger()
 _job_semaphore = asyncio.Semaphore(2)
 
 async def _notify_backend(batch_id: str, batch: DispatchBatch):
+    if not settings.BACKEND_NOTIFY_ENABLED:
+        logger.info("backend_notify_disabled", batch_id=batch_id)
+        return
+
     backend_url = settings.BACKEND_SERVER_URL
     if not backend_url:
         return
