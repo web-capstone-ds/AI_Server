@@ -42,3 +42,20 @@ def test_extra_fields_allowed():
     model = DispatchBatch(**payload)
     assert model.unknown_root_field == "value"
     assert model.records[0].unknown_sub_field == 123
+
+def test_alarm_history_masks_pii():
+    from src.models.dispatch_batch import DispatchBatch
+
+    payload = get_mock_batch()
+    payload["alarmHistory"] = [{
+        "time": "2026-05-31T00:00:00Z",
+        "alarm_level": "WARNING",
+        "hw_error_code": "TEST_ERR",
+        "hw_error_source": "SECURITY_TEST",
+        "hw_error_detail": "작업자 김철수(010-1234-5678) test@example.com ENG-KIM",
+        "auto_recovery_attempted": False,
+        "requires_manual_intervention": True,
+    }]
+
+    model = DispatchBatch(**payload)
+    assert model.alarmHistory[0].hw_error_detail == "작업자 김철수([PHONE]) [EMAIL] [ID]"

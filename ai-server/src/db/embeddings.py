@@ -20,7 +20,7 @@ async def save_embeddings(
 
     query = """
     INSERT INTO lot_embeddings (
-        batch_id, lot_hash, equipment_hash, equipment_id, recipe_id,
+        batch_id, lot_hash, equipment_hash, equipment_id, recipe_hash,
         chunk_type, chunk_text, embedding, yield_pct, lot_status,
         total_units, fail_count, dispatched_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, $10, $11, $12, $13)
@@ -39,7 +39,7 @@ async def save_embeddings(
             batch.lotHash,
             batch.equipmentHash,
             batch.equipmentId,
-            ls.recipe_id,
+            ls.recipeHash,
             chunk.type,
             chunk.text,
             emb_str, # Will be cast to vector in SQL if needed, but pgvector handles string format

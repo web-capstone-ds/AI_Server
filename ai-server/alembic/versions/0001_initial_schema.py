@@ -50,7 +50,7 @@ def upgrade() -> None:
             lot_hash        TEXT            NOT NULL,
             equipment_hash  TEXT            NOT NULL,
             equipment_id    TEXT,
-            recipe_id       TEXT            NOT NULL,
+            recipe_hash     TEXT            NOT NULL,
             chunk_type      TEXT            NOT NULL,
             chunk_text      TEXT            NOT NULL,
             embedding       vector(384)     NOT NULL,
@@ -79,7 +79,7 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS idx_ingest_batch_hash ON ingest_batches (lot_hash, equipment_hash)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_ingest_job_status ON ingest_jobs (status)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_lot_embeddings_batch ON lot_embeddings (batch_id)")
-    op.execute("CREATE INDEX IF NOT EXISTS idx_lot_embeddings_recipe ON lot_embeddings (recipe_id, dispatched_at DESC)")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_lot_embeddings_recipe_hash ON lot_embeddings (recipe_hash, dispatched_at DESC)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_lot_embeddings_equipment ON lot_embeddings (equipment_hash, dispatched_at DESC)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_lot_embeddings_vector ON lot_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)")
     op.execute("CREATE INDEX IF NOT EXISTS idx_analysis_reports_type_date ON analysis_reports (report_type, generated_at DESC)")

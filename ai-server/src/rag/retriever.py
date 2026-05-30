@@ -21,7 +21,7 @@ async def retrieve_relevant_chunks(
     
     # 2. Build Query
     base_query = """
-    SELECT chunk_type, chunk_text, lot_hash, equipment_id, equipment_hash, recipe_id, 
+    SELECT chunk_type, chunk_text, lot_hash, equipment_id, equipment_hash, recipe_hash,
            yield_pct, fail_count, total_units, dispatched_at,
            (embedding <=> $1::vector) as distance
     FROM lot_embeddings
@@ -37,9 +37,9 @@ async def retrieve_relevant_chunks(
         if filters.get("equipmentHash"):
             params.append(filters["equipmentHash"])
             where_clauses.append(f"equipment_hash = ${len(params)}")
-        if filters.get("recipeId"):
-            params.append(filters["recipeId"])
-            where_clauses.append(f"recipe_id = ${len(params)}")
+        if filters.get("recipeHash"):
+            params.append(filters["recipeHash"])
+            where_clauses.append(f"recipe_hash = ${len(params)}")
         if filters.get("lotHash"):
             params.append(filters["lotHash"])
             where_clauses.append(f"lot_hash = ${len(params)}")

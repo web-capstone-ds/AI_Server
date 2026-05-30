@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from zoneinfo import ZoneInfo
 import uuid
+import re
 
 DEFAULT_LOCAL_TZ = ZoneInfo("Asia/Seoul")
 
@@ -21,6 +22,11 @@ def normalize_datetime_to_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         value = value.replace(tzinfo=DEFAULT_LOCAL_TZ)
     return value.astimezone(timezone.utc)
+
+def mask_pii(value: str) -> str:
+    value = re.sub(r"\d{2,3}-\d{3,4}-\d{4}", "[PHONE]", value)
+    value = re.sub(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}", "[EMAIL]", value)
+    return re.sub(r"[A-Z]{2,4}-[A-Z0-9]{3,}", "[ID]", value)
 
 class BaseExtraModel(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -56,7 +62,7 @@ class AnonymizedLotRecord(BaseExtraModel):
     equipmentHash: str
     equipmentId: Optional[str] = None
     lot_status: str
-    recipe_id: str
+    recipeHash: str
     total_units: int
     pass_count: int
     fail_count: int
@@ -86,7 +92,7 @@ class StatusHistoryRecord(BaseExtraModel):
     time: datetime
     equipment_status: str
     lot_id: Optional[str] = None
-    recipe_id: Optional[str] = None
+    recipeHash: Optional[str] = None
     uptime_sec: int
     current_unit_count: Optional[int] = None
     expected_total_units: Optional[int] = None
@@ -117,6 +123,11 @@ class AlarmHistoryRecord(BaseExtraModel):
     @classmethod
     def normalize_time(cls, v: datetime) -> datetime:
         return normalize_datetime_to_utc(v)
+
+    @field_validator("hw_error_detail", mode="after")
+    @classmethod
+    def mask_hw_error_detail(cls, v: str) -> str:
+        return mask_pii(v)
 
 class DispatchBatch(BaseExtraModel):
     batchId: uuid.UUID

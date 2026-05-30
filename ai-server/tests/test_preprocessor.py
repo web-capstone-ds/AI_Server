@@ -42,7 +42,7 @@ def test_aggregate_lot_stats_with_fail():
         ],
         "lotSummary": {
             "lotHash": lot_hash, "equipmentHash": "EQ1", "lot_status": "COMPLETED",
-            "recipe_id": "R1", "total_units": 2, "pass_count": 1, "fail_count": 1,
+            "recipeHash": "recipe_hash_r1", "total_units": 2, "pass_count": 1, "fail_count": 1,
             "yield_pct": 50.0, "lot_duration_sec": 120
         }
     }

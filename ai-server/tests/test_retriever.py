@@ -13,7 +13,7 @@ async def test_retrieve_relevant_chunks_no_filters():
             "lot_hash": "hash1",
             "equipment_id": "EQ1",
             "equipment_hash": "eqhash1",
-            "recipe_id": "REC1",
+            "recipe_hash": "recipehash1",
             "yield_pct": 98.5,
             "fail_count": 10,
             "total_units": 1000,
@@ -40,7 +40,7 @@ async def test_retrieve_relevant_chunks_with_filters():
     
     filters = {
         "equipmentId": "EQ1",
-        "recipeId": "REC1",
+        "recipeHash": "recipehash1",
         "date_range": {
             "start": "2024-01-01T00:00:00Z",
             "end": "2024-01-02T00:00:00Z"
@@ -52,6 +52,6 @@ async def test_retrieve_relevant_chunks_with_filters():
     args, _ = conn.fetch.call_args
     query = args[0]
     assert "equipment_id = $2" in query
-    assert "recipe_id = $3" in query
+    assert "recipe_hash = $3" in query
     assert "dispatched_at >= $4" in query
     assert "dispatched_at <= $5" in query

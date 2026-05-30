@@ -3,6 +3,7 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from src.config import settings
+from src.utils.service_jwt import create_ai_service_token
 from src.llm.report_generator import generate_periodic_report
 from src.db.pool import db_pool
 from src.db.reports import save_report, mark_report_pushed
@@ -20,14 +21,11 @@ class ReportScheduler:
         """
         url = f"{settings.BACKEND_SERVER_URL}/api/v1/reports"
         
-        # In a real app, generate a proper JWT for the backend
-        headers = {
-            "Content-Type": "application/json"
-        }
-        if settings.BACKEND_SERVICE_TOKEN:
-            headers["Authorization"] = f"Bearer {settings.BACKEND_SERVICE_TOKEN}"
-        else:
-            logger.warning("backend_service_token_missing")
+        headers = {"Content-Type": "application/json"}
+        try:
+            headers["Authorization"] = f"Bearer {create_ai_service_token(settings)}"
+        except RuntimeError:
+            logger.warning("ai_service_private_key_missing")
         
         attempt = 0
         while attempt < max_retries:

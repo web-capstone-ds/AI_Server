@@ -71,7 +71,7 @@ async def query_ai(
                 distance=c["distance"],
                 metadata={
                     "equipment_id": c.get("equipment_id"),
-                    "recipe_id": c.get("recipe_id"),
+                    "recipe_hash": c.get("recipe_hash"),
                     "dispatched_at": str(c.get("dispatched_at")),
                 },
             )

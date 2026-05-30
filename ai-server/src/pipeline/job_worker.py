@@ -4,6 +4,7 @@ import structlog
 import httpx
 from typing import Optional
 from src.config import settings
+from src.utils.service_jwt import create_ai_service_token
 from src.models.dispatch_batch import DispatchBatch
 from src.db.pool import db_pool
 from src.db.ingest_jobs import update_job_status
@@ -27,10 +28,10 @@ async def _notify_backend(batch_id: str, batch: DispatchBatch):
         return
 
     headers = {"Content-Type": "application/json"}
-    if settings.BACKEND_SERVICE_TOKEN:
-        headers["Authorization"] = f"Bearer {settings.BACKEND_SERVICE_TOKEN}"
-    else:
-        logger.warning("backend_service_token_missing", msg="Skipping Authorization header")
+    try:
+        headers["Authorization"] = f"Bearer {create_ai_service_token(settings)}"
+    except RuntimeError:
+        logger.warning("ai_service_private_key_missing", batch_id=batch_id, msg="Skipping Authorization header")
 
     payload = {
         "batchId": batch_id,

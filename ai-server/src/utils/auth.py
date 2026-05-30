@@ -8,6 +8,10 @@ import structlog
 logger = structlog.get_logger()
 security = HTTPBearer()
 
+
+def backend_public_key() -> str:
+    return settings.BACKEND_JWT_PUBLIC_KEY.replace("\\n", "\n")
+
 async def verify_ingest_api_key(x_api_key: str = Header(..., alias="X-Api-Key")):
     if not secrets.compare_digest(x_api_key, settings.AI_INGEST_API_KEY):
         logger.warning("invalid_ingest_api_key")
@@ -18,8 +22,8 @@ async def verify_backend_jwt(auth: HTTPAuthorizationCredentials = Depends(securi
     try:
         payload = jwt.decode(
             auth.credentials, 
-            settings.BACKEND_JWT_SECRET, 
-            algorithms=["HS256"],
+            backend_public_key(),
+            algorithms=["RS256"],
             options={"require": ["exp", "iat"]}
         )
         return payload

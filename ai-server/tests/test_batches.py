@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from src.main import app
 from src.config import settings
+from tests.conftest import TEST_BACKEND_JWT_PRIVATE_KEY
 from unittest.mock import patch, MagicMock, AsyncMock
 
 client = TestClient(app)
@@ -15,7 +16,7 @@ def create_test_jwt():
         "iat": now,
         "exp": now + timedelta(hours=1)
     }
-    return jwt.encode(payload, settings.BACKEND_JWT_SECRET, algorithm="HS256")
+    return jwt.encode(payload, TEST_BACKEND_JWT_PRIVATE_KEY.replace("\\n", "\n"), algorithm="RS256")
 
 def test_get_batches_auth_failure():
     response = client.get("/api/batches")

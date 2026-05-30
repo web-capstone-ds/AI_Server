@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 class QueryRequest(BaseModel):
     question: str = Field(..., description="사용자의 질문")
-    filters: Optional[Dict[str, Any]] = Field(None, description="필터 (recipe_id, equipmentId, equipmentHash, date_range)")
+    filters: Optional[Dict[str, Any]] = Field(None, description="필터 (recipeHash, equipmentId, equipmentHash, date_range)")
 
 class Source(BaseModel):
     lotHash: str

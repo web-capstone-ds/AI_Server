@@ -15,8 +15,8 @@ class Settings(BaseSettings):
 
     # Authentication
     AI_INGEST_API_KEY: str
-    BACKEND_JWT_SECRET: str
-    BACKEND_SERVICE_TOKEN: str = ""
+    BACKEND_JWT_PUBLIC_KEY: str
+    AI_SERVER_PRIVATE_KEY: str = ""
     BACKEND_SERVER_URL: str = "http://web-backend:8080"
     BACKEND_NOTIFY_ENABLED: bool = False
 

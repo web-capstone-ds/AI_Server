@@ -52,7 +52,7 @@ async def aggregate_metrics(conn: asyncpg.Connection, start_time: datetime, end_
     # 2. Recipe Breakdown
     recipe_query = """
     SELECT
-        payload_raw->'lotSummary'->>'recipe_id' as recipe_id,
+        payload_raw->'lotSummary'->>'recipeHash' as recipe_id,
         AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
         COUNT(*) as total_lots
     FROM ingest_batches

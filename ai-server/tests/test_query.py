@@ -39,7 +39,7 @@ def test_query_ai_success(mock_db_pool, mock_retriever, mock_llm):
             "chunk_text": "test content",
             "lot_hash": "hash1",
             "equipment_id": "EQ1",
-            "recipe_id": "REC1",
+            "recipe_hash": "recipehash1",
             "yield_pct": 98.5,
             "dispatched_at": "2024-01-01",
             "distance": 0.1

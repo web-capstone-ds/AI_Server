@@ -21,11 +21,12 @@ def create_chunks(batch: DispatchBatch) -> List[Chunk]:
     prefix = "passage: "
 
     equipment = batch.equipmentId or batch.equipmentHash
+    recipe_hash_preview = lot_summary.recipeHash[:12]
     chunks.append(
         Chunk(
             "lot_summary",
             f"{prefix}LOT summary | lotHash={batch.lotHash} | equipment={equipment} | "
-            f"recipe={lot_summary.recipe_id} | yield={lot_summary.yield_pct}% | "
+            f"recipe_hash={recipe_hash_preview} | yield={lot_summary.yield_pct}% | "
             f"PASS={lot_summary.pass_count} | FAIL={lot_summary.fail_count} | "
             f"total_units={lot_summary.total_units} | lot_duration={lot_summary.lot_duration_sec}s",
         )

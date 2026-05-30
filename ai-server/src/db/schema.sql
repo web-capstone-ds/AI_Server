@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS lot_embeddings (
     lot_hash        TEXT            NOT NULL,
     equipment_hash  TEXT            NOT NULL,
     equipment_id    TEXT,
-    recipe_id       TEXT            NOT NULL,
+    recipe_hash     TEXT            NOT NULL,
     chunk_type      TEXT            NOT NULL,
     chunk_text      TEXT            NOT NULL,
     embedding       vector(384)     NOT NULL,
@@ -49,8 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_ingest_job_status
 CREATE INDEX IF NOT EXISTS idx_lot_embeddings_batch
     ON lot_embeddings (batch_id);
 
-CREATE INDEX IF NOT EXISTS idx_lot_embeddings_recipe
-    ON lot_embeddings (recipe_id, dispatched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lot_embeddings_recipe_hash
+    ON lot_embeddings (recipe_hash, dispatched_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_lot_embeddings_equipment
     ON lot_embeddings (equipment_hash, dispatched_at DESC);
