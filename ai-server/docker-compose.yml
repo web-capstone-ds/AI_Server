@@ -5,6 +5,10 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      # .env의 PG_HOST=localhost는 호스트 직접 실행용. Docker 내부에서는 서비스명으로 덮어씀.
+      PG_HOST: pgvector
+      PG_PORT: "5432"
     # 리눅스에서 BACKEND_SERVER_URL=http://host.docker.internal:8080 해석을 위해 필요.
     extra_hosts:
       - "host.docker.internal:host-gateway"

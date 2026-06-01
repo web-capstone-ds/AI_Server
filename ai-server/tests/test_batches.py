@@ -63,15 +63,18 @@ async def test_kpi_summary_mock(mock_get_pool):
     headers = {"Authorization": f"Bearer {token}"}
     response = client.get("/api/batches/kpi-summary", headers=headers)
     assert response.status_code == 200
-    data = response.json()
-    assert data["totalUnits"] == 100
-    assert data["avgYieldPct"] == 95.0
-    assert data["avgMtbfHours"] == 12.5
-    assert len(data["topFailReasons"]) == 1
-    assert data["topFailReasons"][0]["reason_code"] == "E001"
-    assert len(data["equipmentDetails"]) == 1
-    assert data["equipmentDetails"][0]["equipmentId"] == "EQ1"
-    assert data["equipmentDetails"][0]["equipmentHash"] == "hash-eq1"
+    body = response.json()
+    # Backend envelope: {status, data:{period, summary, groups}}
+    assert body["status"] == "ok"
+    summary = body["data"]["summary"]
+    assert summary["totalUnits"] == 100
+    assert summary["avgYieldPct"] == 95.0
+    assert summary["avgMtbfHours"] == 12.5
+    assert len(summary["topFailReasons"]) == 1
+    assert summary["topFailReasons"][0]["reason_code"] == "E001"
+    assert len(summary["equipmentDetails"]) == 1
+    assert summary["equipmentDetails"][0]["equipmentId"] == "EQ1"
+    assert summary["equipmentDetails"][0]["equipmentHash"] == "hash-eq1"
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")
@@ -97,9 +100,69 @@ async def test_kpi_summary_uses_equipment_hash_when_plain_id_is_null(mock_get_po
     response = client.get("/api/batches/kpi-summary", headers=headers)
 
     assert response.status_code == 200
-    data = response.json()
-    assert data["equipmentDetails"][0]["equipmentId"] == "hash-only"
-    assert data["equipmentDetails"][0]["equipmentHash"] == "hash-only"
+    summary = response.json()["data"]["summary"]
+    assert summary["equipmentDetails"][0]["equipmentId"] == "hash-only"
+    assert summary["equipmentDetails"][0]["equipmentHash"] == "hash-only"
+
+@pytest.mark.asyncio
+@patch("src.db.pool.db_pool.get_pool")
+async def test_latest_returns_enveloped_batch_with_derived(mock_get_pool):
+    import json
+    payload = {
+        "equipmentId": "DS-VIS-001",
+        "records": [{
+            "overall_result": "FAIL",
+            "inspection_detail": {
+                "side_result": [
+                    {"ZAxisNum": 6, "ErrorType": 12, "XOffset": 0, "YOffset": 0},
+                    {"ZAxisNum": 7, "ErrorType": 12, "XOffset": 0, "YOffset": 0},
+                ],
+                "prs_result": [
+                    {"ZAxisNum": 0, "ErrorType": 0, "XOffset": 5, "YOffset": 2},
+                ],
+            },
+            "geometric": {"dimension_w_mm": 10.08},
+            "singulation": {"chipping_top_um": 52.0},
+        }],
+        "alarmHistory": [],
+    }
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = {"payload_raw": json.dumps(payload)}
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_get_pool.return_value = mock_pool
+
+    token = create_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/api/batches/latest?equipmentId=DS-VIS-001", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["data"]["batch"]["equipmentId"] == "DS-VIS-001"
+    derived = body["data"]["derived"]
+    assert len(derived["perSlotStats"]) == 3  # slots 0, 6, 7
+    # ET=12 가 최다 (slot 6,7) → patternName 후보
+    top = max(derived["errorTypeDistribution"], key=lambda e: e["count"])
+    assert top["errorType"] == 12
+
+
+@pytest.mark.asyncio
+@patch("src.db.pool.db_pool.get_pool")
+async def test_latest_no_batch_returns_null_data(mock_get_pool):
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = None
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_get_pool.return_value = mock_pool
+
+    token = create_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/api/batches/latest?equipmentId=NONE", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    # data=null → Spring BatchEnvelope.ok() == false → Optional.empty() → mock fallback
+    assert body["data"] is None
+
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")

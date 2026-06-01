@@ -78,8 +78,8 @@ async def list_batches(
 
 async def get_latest_batches_per_equipment(conn: asyncpg.Connection) -> List[Dict[str, Any]]:
     query = """
-    SELECT DISTINCT ON (equipment_id) 
-        batch_id, lot_hash, equipment_id, dispatched_at, 
+    SELECT DISTINCT ON (equipment_id)
+        batch_id, lot_hash, equipment_id, dispatched_at,
         payload_raw->'lotSummary'->>'lot_status' as lot_status,
         (payload_raw->'lotSummary'->>'yield_pct')::float as yield_pct
     FROM ingest_batches
@@ -87,6 +87,26 @@ async def get_latest_batches_per_equipment(conn: asyncpg.Connection) -> List[Dic
     """
     rows = await conn.fetch(query)
     return [dict(row) for row in rows]
+
+async def get_latest_batch_full(conn: asyncpg.Connection, equipment_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Returns the full payload_raw (parsed DispatchBatch) of the most recent batch.
+    If equipment_id is given, scopes to that equipment. None if no batch exists.
+    This dict maps directly to Spring's BatchDetailResponse.batch.
+    """
+    query = """
+    SELECT payload_raw
+    FROM ingest_batches
+    WHERE ($1::text IS NULL OR equipment_id = $1)
+    ORDER BY dispatched_at DESC
+    LIMIT 1
+    """
+    row = await conn.fetchrow(query, equipment_id)
+    if not row or row["payload_raw"] is None:
+        return None
+    payload = row["payload_raw"]
+    # payload_raw is JSONB; asyncpg may return it as str depending on codec config.
+    return json.loads(payload) if isinstance(payload, str) else dict(payload)
 
 async def aggregate_kpi_summary(
     conn: asyncpg.Connection,
