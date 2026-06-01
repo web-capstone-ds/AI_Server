@@ -59,7 +59,10 @@ async def list_batches(
     
     if equipment_id:
         params.append(equipment_id)
-        where_clauses.append(f"equipment_id = ${len(params)}")
+        where_clauses.append(
+            f"(equipment_id = ${len(params)} OR equipment_hash = ${len(params)} "
+            f"OR COALESCE(equipment_id, equipment_hash) = ${len(params)})"
+        )
     if from_date:
         params.append(from_date)
         where_clauses.append(f"dispatched_at >= ${len(params)}")
@@ -97,7 +100,12 @@ async def get_latest_batch_full(conn: asyncpg.Connection, equipment_id: Optional
     query = """
     SELECT payload_raw
     FROM ingest_batches
-    WHERE ($1::text IS NULL OR equipment_id = $1)
+    WHERE (
+        $1::text IS NULL
+        OR equipment_id = $1
+        OR equipment_hash = $1
+        OR COALESCE(equipment_id, equipment_hash) = $1
+    )
     ORDER BY dispatched_at DESC
     LIMIT 1
     """
@@ -122,7 +130,10 @@ async def aggregate_kpi_summary(
     
     if equipment_id:
         params.append(equipment_id)
-        where_clauses.append(f"equipment_id = ${len(params)}")
+        where_clauses.append(
+            f"(equipment_id = ${len(params)} OR equipment_hash = ${len(params)} "
+            f"OR COALESCE(equipment_id, equipment_hash) = ${len(params)})"
+        )
     if from_date:
         params.append(from_date)
         where_clauses.append(f"dispatched_at >= ${len(params)}")
@@ -326,7 +337,7 @@ async def get_latest_batches(
     params = []
     if equipment_id:
         params.append(equipment_id)
-        query += " WHERE equipment_id = $1"
+        query += " WHERE (equipment_id = $1 OR equipment_hash = $1 OR COALESCE(equipment_id, equipment_hash) = $1)"
 
     params.append(limit)
     query += f" ORDER BY dispatched_at DESC LIMIT ${len(params)}"

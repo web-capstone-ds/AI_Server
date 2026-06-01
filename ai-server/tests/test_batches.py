@@ -42,6 +42,24 @@ async def test_get_batches_with_jwt(mock_get_pool):
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")
+async def test_get_batches_filters_by_plain_id_or_equipment_hash(mock_get_pool):
+    mock_conn = AsyncMock()
+    mock_conn.fetch.return_value = []
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_get_pool.return_value = mock_pool
+
+    token = create_test_jwt()
+    response = client.get("/api/batches?equipmentId=hash-eq1", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    query = mock_conn.fetch.call_args.args[0]
+    assert "equipment_id" in query
+    assert "equipment_hash" in query
+    assert mock_conn.fetch.call_args.args[1] == "hash-eq1"
+
+@pytest.mark.asyncio
+@patch("src.db.pool.db_pool.get_pool")
 async def test_kpi_summary_mock(mock_get_pool):
     mock_conn = AsyncMock()
     mock_conn.fetchrow.side_effect = [
@@ -144,6 +162,31 @@ async def test_latest_returns_enveloped_batch_with_derived(mock_get_pool):
     # ET=12 가 최다 (slot 6,7) → patternName 후보
     top = max(derived["errorTypeDistribution"], key=lambda e: e["count"])
     assert top["errorType"] == 12
+
+@pytest.mark.asyncio
+@patch("src.db.pool.db_pool.get_pool")
+async def test_latest_accepts_equipment_hash_filter(mock_get_pool):
+    import json
+    payload = {
+        "equipmentHash": "hash-eq1",
+        "records": [],
+        "alarmHistory": [],
+    }
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow.return_value = {"payload_raw": json.dumps(payload)}
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_get_pool.return_value = mock_pool
+
+    token = create_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.get("/api/batches/latest?equipmentId=hash-eq1", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["batch"]["equipmentHash"] == "hash-eq1"
+    query = mock_conn.fetchrow.call_args.args[0]
+    assert "equipment_hash" in query
+    assert mock_conn.fetchrow.call_args.args[1] == "hash-eq1"
 
 
 @pytest.mark.asyncio
