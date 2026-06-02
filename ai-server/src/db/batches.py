@@ -302,17 +302,35 @@ async def aggregate_kpi_summary(
     """
     fail_rows = await conn.fetch(fail_query, *batch_params)
 
-    # 6. Equipment Details (inspection_results 기준, consistent with headline)
+    # 6. Equipment Details.
+    # 장비 목록은 LOT 완료 여부와 무관하게 equipment_status_log(상태 피드)의 모든 장비를
+    # 기준으로 채운다. LOT를 완료하지 않은 장비(IDLE/STOP/진행중)도 드롭다운/상세 목록에
+    # 나타나며, 생산/수율/UPH는 LOT batch가 있을 때만 채워지고 없으면 0이 된다.
+    # deduped(batch_params)와 status_latest(status log) 두 소스를 함께 쓰므로 파라미터
+    # 목록을 이어 붙이고 status 절 인덱스를 batch_params 길이만큼 오프셋한다.
+    ed_params = list(batch_params)
+    ed_status_clauses = []
+    if equipment_id:
+        ed_params.append(equipment_id)
+        ed_status_clauses.append(
+            f"(equipment_id = ${len(ed_params)}::text OR equipment_hash = ${len(ed_params)}::text "
+            f"OR equipment_key = ${len(ed_params)}::text)"
+        )
+    if to_date:
+        ed_params.append(to_date)
+        ed_status_clauses.append(f"ts <= ${len(ed_params)}::timestamptz")
+    ed_status_where = (" WHERE " + " AND ".join(ed_status_clauses)) if ed_status_clauses else ""
+
     equip_detail_query = f"""
     WITH {deduped_cte},
-    latest AS (
-        SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
-            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+    status_latest AS (
+        SELECT DISTINCT ON (equipment_key)
+            equipment_key,
             equipment_hash,
-            payload_raw->'statusHistory'->-1->>'equipment_status' as status
-        FROM ingest_batches
-        {where_sql}
-        ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
+            status
+        FROM equipment_status_log
+        {ed_status_where}
+        ORDER BY equipment_key, ts DESC
     ),
     uph AS (
         SELECT
@@ -333,19 +351,20 @@ async def aggregate_kpi_summary(
         GROUP BY COALESCE(d.equipment_id, d.equipment_hash)
     )
     SELECT
-        a.equipment_key,
-        COALESCE(l.equipment_hash, a.equipment_hash) AS equipment_hash,
-        CASE WHEN a.total_units > 0
+        COALESCE(s.equipment_key, a.equipment_key) AS equipment_key,
+        COALESCE(s.equipment_hash, a.equipment_hash) AS equipment_hash,
+        CASE WHEN COALESCE(a.total_units, 0) > 0
              THEN ROUND(100.0 * a.pass_count / a.total_units, 2)
              ELSE 0 END AS avg_yield,
-        a.total_units,
+        COALESCE(a.total_units, 0) AS total_units,
         COALESCE(u.avg_uph, 0) AS avg_uph,
-        COALESCE(l.status, 'UNKNOWN') as status
-    FROM agg a
-    LEFT JOIN latest l USING (equipment_key)
-    LEFT JOIN uph u USING (equipment_key)
+        COALESCE(s.status, 'UNKNOWN') as status
+    FROM status_latest s
+    FULL OUTER JOIN agg a ON a.equipment_key = s.equipment_key
+    LEFT JOIN uph u ON u.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
+    ORDER BY total_units DESC, equipment_key
     """
-    equip_detail_rows = await conn.fetch(equip_detail_query, *batch_params)
+    equip_detail_rows = await conn.fetch(equip_detail_query, *ed_params)
 
     # 7. MTBF Calculation
     mtbf_query = f"""

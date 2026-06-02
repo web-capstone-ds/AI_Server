@@ -71,7 +71,11 @@ async def test_kpi_summary_mock(mock_get_pool):
     ]
     mock_conn.fetch.side_effect = [
         [{"reason_code": "E001", "count": 10}],
-        [{"equipment_key": "EQ1", "equipment_hash": "hash-eq1", "avg_yield": 98.0, "total_units": 1000, "avg_uph": 120.0, "status": "RUN"}]
+        # 장비 목록은 status log 기준 — LOT가 없어 생산 0인 장비(IDLE)도 포함된다.
+        [
+            {"equipment_key": "EQ1", "equipment_hash": "hash-eq1", "avg_yield": 98.0, "total_units": 1000, "avg_uph": 120.0, "status": "RUN"},
+            {"equipment_key": "EQ3", "equipment_hash": "hash-eq3", "avg_yield": 0.0, "total_units": 0, "avg_uph": 0.0, "status": "IDLE"},
+        ]
     ]
     mock_pool = MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
@@ -97,9 +101,13 @@ async def test_kpi_summary_mock(mock_get_pool):
     assert summary["avgMtbfHours"] == 12.5
     assert len(summary["topFailReasons"]) == 1
     assert summary["topFailReasons"][0]["reason_code"] == "E001"
-    assert len(summary["equipmentDetails"]) == 1
+    assert len(summary["equipmentDetails"]) == 2
     assert summary["equipmentDetails"][0]["equipmentId"] == "EQ1"
     assert summary["equipmentDetails"][0]["equipmentHash"] == "hash-eq1"
+    # 생산이 없는(LOT 미완료) 장비도 상태 피드 기준으로 목록에 포함된다.
+    idle = next(e for e in summary["equipmentDetails"] if e["equipmentId"] == "EQ3")
+    assert idle["status"] == "IDLE"
+    assert idle["totalUnits"] == 0
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")
