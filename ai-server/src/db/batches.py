@@ -128,21 +128,41 @@ async def aggregate_kpi_summary(
     """
     where_clauses = []
     params = []
-    
+
+    # equipment_status_log(가동률·현재 가동 소스)용 별도 WHERE 절. 같은 params 인덱스를 공유한다.
+    # - period: ts 가 [from, to] 안 (가동률/비가동 구간 집계용)
+    # - latest: ts <= to (현재 상태 판정용, 하한 없음 — 종일 무변화 장비도 마지막 상태 유지)
+    status_eq = None
+    status_from = None
+    status_to = None
+
     if equipment_id:
         params.append(equipment_id)
         where_clauses.append(
             f"(equipment_id = ${len(params)} OR equipment_hash = ${len(params)} "
             f"OR COALESCE(equipment_id, equipment_hash) = ${len(params)})"
         )
+        status_eq = (
+            f"(equipment_id = ${len(params)} OR equipment_hash = ${len(params)} "
+            f"OR equipment_key = ${len(params)})"
+        )
     if from_date:
         params.append(from_date)
         where_clauses.append(f"dispatched_at >= ${len(params)}")
+        status_from = f"ts >= ${len(params)}"
     if to_date:
         params.append(to_date)
         where_clauses.append(f"dispatched_at <= ${len(params)}")
-        
+        status_to = f"ts <= ${len(params)}"
+
     where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    def _status_where(parts):
+        parts = [p for p in parts if p]
+        return (" WHERE " + " AND ".join(parts)) if parts else ""
+
+    status_period_where = _status_where([status_eq, status_from, status_to])
+    status_latest_where = _status_where([status_eq, status_to])
 
     # Deduplicate batches by lot_hash, keeping only the latest dispatched batch
     # per LOT. A LOT can be re-dispatched with a new batch_id (e.g. dispatcher
@@ -205,16 +225,17 @@ async def aggregate_kpi_summary(
     oracle_row = await conn.fetchrow(oracle_query, *params)
 
     # 3. Active Equipment (latest status per equipment).
-    # Total equipment is the configured equipment master (denominator of 가동 N/M),
-    # not just equipment that happen to have a batch in the period.
+    # equipment_status_log(LOT와 무관한 실시간 상태 로그) 기준으로, LOT를 완료하지 않은
+    # 장비(IDLE/STOP/진행중)도 포함해 현재 상태를 판정한다.
+    # Total equipment is the configured equipment master (denominator of 가동 N/M).
     equip_query = f"""
     WITH latest_status AS (
-        SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
-            COALESCE(equipment_id, equipment_hash) AS equipment_key,
-            payload_raw->'statusHistory'->-1->>'equipment_status' as last_status
-        FROM ingest_batches
-        {where_sql}
-        ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
+        SELECT DISTINCT ON (equipment_key)
+            equipment_key,
+            status as last_status
+        FROM equipment_status_log
+        {status_latest_where}
+        ORDER BY equipment_key, ts DESC
     )
     SELECT
         COUNT(*) as observed_equip_count,
@@ -224,20 +245,20 @@ async def aggregate_kpi_summary(
     equip_row = await conn.fetchrow(equip_query, *params)
 
     # 4. Availability & Downtime (Detailed aggregation)
+    # equipment_status_log 기준. 장비별로 ts 순서대로 LEAD를 잡아 RUN/IDLE/STOP 구간 시간을
+    # 합산한다(배치 경계 없이 장비 단위로 연속 계산하므로 누락/중복 없음).
     avail_query = f"""
-    WITH {deduped_cte},
-    sh AS (
+    WITH sh AS (
         SELECT
-            batch_id,
-            COALESCE(equipment_id, equipment_hash) AS equipment_key,
-            (rec->>'equipment_status') as status,
-            (rec->>'time')::timestamptz as ts,
-            LEAD((rec->>'time')::timestamptz) OVER (
-                PARTITION BY batch_id, COALESCE(equipment_id, equipment_hash)
-                ORDER BY (rec->>'time')::timestamptz
+            equipment_key,
+            status,
+            ts,
+            LEAD(ts) OVER (
+                PARTITION BY equipment_key
+                ORDER BY ts
             ) as next_ts
-        FROM deduped,
-        jsonb_array_elements(payload_raw->'statusHistory') as rec
+        FROM equipment_status_log
+        {status_period_where}
     ),
     totals AS (
         SELECT

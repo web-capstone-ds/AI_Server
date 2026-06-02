@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from src.models.dispatch_batch import DispatchBatch, IngestResponse
+from src.models.status_snapshot import EquipmentStatusSnapshot, StatusIngestResponse
 from src.utils.auth import verify_ingest_api_key
 from src.db.pool import db_pool
 from src.db.batches import save_ingest_batch, check_batch_id_exists
+from src.db.status_log import save_status_snapshot
 from src.db.ingest_jobs import create_ingest_job
 from src.pipeline.job_worker import process_batch_job
 import structlog
@@ -51,5 +53,30 @@ async def ingest_batch(
 
     # 4. Enqueue background processing (pass parsed batch to avoid re-deserialization risk)
     background_tasks.add_task(process_batch_job, batch_id_str, batch)
-    
+
     return IngestResponse(status="accepted", batchId=batch_id_str)
+
+
+@router.post("/ingest/status", response_model=StatusIngestResponse)
+async def ingest_status(
+    snapshot: EquipmentStatusSnapshot,
+    _ = Depends(verify_ingest_api_key)
+):
+    """
+    장비 실시간 상태(status_updates) 구간을 적재한다. LOT batch와 독립적인 경로로,
+    LOT를 완료하지 않은 장비(IDLE/STOP/진행중)도 가동률·현재 가동 집계에 반영되게 한다.
+    """
+    logger.info(
+        "status_ingest_received",
+        equipment_hash=snapshot.equipmentHash,
+        count=len(snapshot.statuses),
+    )
+    async with db_pool.get_pool().acquire() as conn:
+        try:
+            async with conn.transaction():
+                received = await save_status_snapshot(conn, snapshot)
+        except Exception as e:
+            logger.error("status_ingest_failed", equipment_hash=snapshot.equipmentHash, error=str(e))
+            raise HTTPException(status_code=500, detail="Database storage failed")
+
+    return StatusIngestResponse(status="accepted", received=received)
