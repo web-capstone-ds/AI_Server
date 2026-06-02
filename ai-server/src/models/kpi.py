@@ -31,6 +31,7 @@ class KpiSummaryResponse(BaseModel):
     warningCount: int
     # Operation KPI
     avgAvailabilityPct: float
+    avgIdlePct: float = 0.0
     totalDowntimeMin: float
     activeEquipmentCount: int
     totalEquipmentCount: int

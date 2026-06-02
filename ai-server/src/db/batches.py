@@ -243,6 +243,8 @@ async def aggregate_kpi_summary(
         SELECT
             SUM(CASE WHEN status = 'RUN' AND next_ts IS NOT NULL
                      THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as run_sec,
+            SUM(CASE WHEN status = 'IDLE' AND next_ts IS NOT NULL
+                     THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as idle_sec,
             SUM(CASE WHEN next_ts IS NOT NULL
                      THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as total_sec,
             SUM(CASE WHEN status = 'STOP' AND next_ts IS NOT NULL
@@ -251,6 +253,7 @@ async def aggregate_kpi_summary(
     )
     SELECT
         ROUND(100.0 * run_sec / NULLIF(total_sec, 0), 2) as avg_availability_pct,
+        ROUND(100.0 * idle_sec / NULLIF(total_sec, 0), 2) as avg_idle_pct,
         stop_sec / 60.0 as total_downtime_min
     FROM totals
     """
@@ -358,6 +361,7 @@ async def aggregate_kpi_summary(
         "activeEquipmentCount": equip_row["active_equip_count"] or 0,
         "totalEquipmentCount": total_equip_count,
         "avgAvailabilityPct": float(avail_row["avg_availability_pct"] or 0.0),
+        "avgIdlePct": float(avail_row["avg_idle_pct"] or 0.0),
         "totalDowntimeMin": float(avail_row["total_downtime_min"] or 0.0),
         "avgMtbfHours": float(mtbf_row["avg_mtbf_hours"]) if mtbf_row and mtbf_row["avg_mtbf_hours"] else None,
         "topFailReasons": [{"reason_code": r["reason_code"], "count": r["count"]} for r in fail_rows],

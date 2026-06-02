@@ -66,7 +66,7 @@ async def test_kpi_summary_mock(mock_get_pool):
         {"total_lots": 1, "total_inspected": 100, "pass_count": 95, "fail_count": 5, "yield_pct": 95.0, "avg_uph": 400.0},
         {"danger_count": 0, "warning_count": 1, "marginal_count": 1},
         {"observed_equip_count": 2, "active_equip_count": 1},
-        {"avg_availability_pct": 90.0, "total_downtime_min": 10.0},
+        {"avg_availability_pct": 90.0, "avg_idle_pct": 5.0, "total_downtime_min": 10.0},
         {"avg_mtbf_hours": 12.5}
     ]
     mock_conn.fetch.side_effect = [
@@ -92,6 +92,8 @@ async def test_kpi_summary_mock(mock_get_pool):
     # No equipment filter -> denominator is the configured equipment master.
     assert summary["totalEquipmentCount"] == len(settings.equipment_master_list)
     assert summary["activeEquipmentCount"] == 1
+    assert summary["avgAvailabilityPct"] == 90.0
+    assert summary["avgIdlePct"] == 5.0
     assert summary["avgMtbfHours"] == 12.5
     assert len(summary["topFailReasons"]) == 1
     assert summary["topFailReasons"][0]["reason_code"] == "E001"
@@ -107,7 +109,7 @@ async def test_kpi_summary_uses_equipment_hash_when_plain_id_is_null(mock_get_po
         {"total_lots": 1, "total_inspected": 100, "pass_count": 95, "fail_count": 5, "yield_pct": 95.0, "avg_uph": 400.0},
         {"danger_count": 0, "warning_count": 1, "marginal_count": 1},
         {"observed_equip_count": 1, "active_equip_count": 1},
-        {"avg_availability_pct": 90.0, "total_downtime_min": 10.0},
+        {"avg_availability_pct": 90.0, "avg_idle_pct": 5.0, "total_downtime_min": 10.0},
         {"avg_mtbf_hours": None}
     ]
     mock_conn.fetch.side_effect = [
