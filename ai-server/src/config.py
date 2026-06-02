@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     EMBEDDING_MAX_SEQ_LENGTH: int = 512
     EMBEDDING_USE_ONNX: bool = True
 
+    # Equipment master (dashboard denominator for 가동 N/M).
+    # Comma-separated equipment IDs. Total equipment count is fixed to this
+    # list regardless of which equipment have ingested batches in the period.
+    EQUIPMENT_MASTER: str = "DS-VIS-001,DS-VIS-002,DS-VIS-003,DS-VIS-004"
+
     # Scheduler
     DAILY_REPORT_CRON: str = "0 0 * * *"
     WEEKLY_REPORT_CRON: str = "0 0 * * 1"
@@ -54,5 +59,9 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_NAME}"
+
+    @property
+    def equipment_master_list(self) -> list[str]:
+        return [e.strip() for e in self.EQUIPMENT_MASTER.split(",") if e.strip()]
 
 settings = Settings()

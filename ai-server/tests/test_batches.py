@@ -63,9 +63,9 @@ async def test_get_batches_filters_by_plain_id_or_equipment_hash(mock_get_pool):
 async def test_kpi_summary_mock(mock_get_pool):
     mock_conn = AsyncMock()
     mock_conn.fetchrow.side_effect = [
-        {"total_lots": 1, "total_units": 100, "total_fail": 5, "avg_yield_pct": 95.0, "avg_uph": 400.0},
+        {"total_lots": 1, "total_inspected": 100, "pass_count": 95, "fail_count": 5, "yield_pct": 95.0, "avg_uph": 400.0},
         {"danger_count": 0, "warning_count": 1, "marginal_count": 1},
-        {"total_equip_count": 2, "active_equip_count": 1},
+        {"observed_equip_count": 2, "active_equip_count": 1},
         {"avg_availability_pct": 90.0, "total_downtime_min": 10.0},
         {"avg_mtbf_hours": 12.5}
     ]
@@ -86,7 +86,12 @@ async def test_kpi_summary_mock(mock_get_pool):
     assert body["status"] == "ok"
     summary = body["data"]["summary"]
     assert summary["totalUnits"] == 100
+    assert summary["totalInspected"] == 100
+    assert summary["totalFail"] == 5
     assert summary["avgYieldPct"] == 95.0
+    # No equipment filter -> denominator is the configured equipment master.
+    assert summary["totalEquipmentCount"] == len(settings.equipment_master_list)
+    assert summary["activeEquipmentCount"] == 1
     assert summary["avgMtbfHours"] == 12.5
     assert len(summary["topFailReasons"]) == 1
     assert summary["topFailReasons"][0]["reason_code"] == "E001"
@@ -99,9 +104,9 @@ async def test_kpi_summary_mock(mock_get_pool):
 async def test_kpi_summary_uses_equipment_hash_when_plain_id_is_null(mock_get_pool):
     mock_conn = AsyncMock()
     mock_conn.fetchrow.side_effect = [
-        {"total_lots": 1, "total_units": 100, "total_fail": 5, "avg_yield_pct": 95.0, "avg_uph": 400.0},
+        {"total_lots": 1, "total_inspected": 100, "pass_count": 95, "fail_count": 5, "yield_pct": 95.0, "avg_uph": 400.0},
         {"danger_count": 0, "warning_count": 1, "marginal_count": 1},
-        {"total_equip_count": 1, "active_equip_count": 1},
+        {"observed_equip_count": 1, "active_equip_count": 1},
         {"avg_availability_pct": 90.0, "total_downtime_min": 10.0},
         {"avg_mtbf_hours": None}
     ]

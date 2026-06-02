@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional, List
 import asyncpg
 import structlog
 import json
+from src.config import settings
 from src.models.dispatch_batch import DispatchBatch
 
 logger = structlog.get_logger()
@@ -142,41 +143,70 @@ async def aggregate_kpi_summary(
         where_clauses.append(f"dispatched_at <= ${len(params)}")
         
     where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    
-    # 1. Base Aggregations (Production & Basic Stats)
-    # Fallback yield: yield_actual (oracle) -> actual (yield_status) -> yield_pct (lotSummary)
+
+    # Deduplicate batches by lot_hash, keeping only the latest dispatched batch
+    # per LOT. A LOT can be re-dispatched with a new batch_id (e.g. dispatcher
+    # restart / lost sent_lots.jsonl), which would otherwise double-count
+    # production. All lot/record-level aggregations read from this CTE.
+    deduped_cte = f"""
+    deduped AS (
+        SELECT DISTINCT ON (lot_hash) *
+        FROM ingest_batches
+        {where_sql}
+        ORDER BY lot_hash, dispatched_at DESC
+    )
+    """
+
+    # 1. Production & Yield (inspection_results 기준)
+    # 생산량 = 검사 결과 행 수, 수율 = PASS / 전체 검사 행 (units-weighted).
+    # UPH/LOT 수는 LOT summary 기준으로 deduped batch 위에서 계산.
     base_query = f"""
-    SELECT 
-        COUNT(*) as total_lots,
-        SUM((payload_raw->'lotSummary'->>'total_units')::int) as total_units,
-        SUM((payload_raw->'lotSummary'->>'fail_count')::int) as total_fail,
-        AVG(COALESCE(
-            (payload_raw->'oracleAnalysis'->0->>'yield_actual')::float,
-            (payload_raw->'oracleAnalysis'->0->'yield_status'->>'actual')::float,
-            (payload_raw->'lotSummary'->>'yield_pct')::float
-        )) as avg_yield_pct,
-        AVG((payload_raw->'lotSummary'->>'total_units')::float / NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
-    FROM ingest_batches
-    {where_sql}
+    WITH {deduped_cte},
+    recs AS (
+        SELECT
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') IS NOT NULL) AS total_inspected,
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') = 'PASS') AS pass_count,
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') = 'FAIL') AS fail_count
+        FROM deduped,
+        jsonb_array_elements(payload_raw->'records') AS rec
+    ),
+    lots AS (
+        SELECT
+            COUNT(*) AS total_lots,
+            AVG((payload_raw->'lotSummary'->>'total_units')::float
+                / NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) AS avg_uph
+        FROM deduped
+    )
+    SELECT
+        lots.total_lots,
+        recs.total_inspected,
+        recs.pass_count,
+        recs.fail_count,
+        CASE WHEN recs.total_inspected > 0
+             THEN ROUND(100.0 * recs.pass_count / recs.total_inspected, 2)
+             ELSE NULL END AS yield_pct,
+        lots.avg_uph
+    FROM recs, lots
     """
     base_row = await conn.fetchrow(base_query, *params)
-    
+
     # 2. Oracle Judgments
     oracle_query = f"""
-    SELECT 
+    WITH {deduped_cte}
+    SELECT
         COUNT(*) FILTER (WHERE payload_raw->'oracleAnalysis'->0->>'judgment' = 'DANGER') as danger_count,
         COUNT(*) FILTER (WHERE payload_raw->'oracleAnalysis'->0->>'judgment' = 'WARNING') as warning_count,
-        COUNT(*) FILTER (WHERE 
-            payload_raw->'oracleAnalysis'->0->'violated_rules'->>'yield_grade' = 'MARGINAL' 
+        COUNT(*) FILTER (WHERE
+            payload_raw->'oracleAnalysis'->0->'violated_rules'->>'yield_grade' = 'MARGINAL'
             OR payload_raw->'oracleAnalysis'->0->>'judgment' = 'WARNING'
         ) as marginal_count
-    FROM ingest_batches
-    {where_sql}
+    FROM deduped
     """
     oracle_row = await conn.fetchrow(oracle_query, *params)
-    
-    # 3. Availability & Active Equipment
-    # Note: Simplified for A3. In real usage, we'd look at the latest batch's status history
+
+    # 3. Active Equipment (latest status per equipment).
+    # Total equipment is the configured equipment master (denominator of 가동 N/M),
+    # not just equipment that happen to have a batch in the period.
     equip_query = f"""
     WITH latest_status AS (
         SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
@@ -186,8 +216,8 @@ async def aggregate_kpi_summary(
         {where_sql}
         ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
     )
-    SELECT 
-        COUNT(*) as total_equip_count,
+    SELECT
+        COUNT(*) as observed_equip_count,
         COUNT(*) FILTER (WHERE last_status = 'RUN') as active_equip_count
     FROM latest_status
     """
@@ -195,7 +225,8 @@ async def aggregate_kpi_summary(
 
     # 4. Availability & Downtime (Detailed aggregation)
     avail_query = f"""
-    WITH sh AS (
+    WITH {deduped_cte},
+    sh AS (
         SELECT
             batch_id,
             COALESCE(equipment_id, equipment_hash) AS equipment_key,
@@ -205,9 +236,8 @@ async def aggregate_kpi_summary(
                 PARTITION BY batch_id, COALESCE(equipment_id, equipment_hash)
                 ORDER BY (rec->>'time')::timestamptz
             ) as next_ts
-        FROM ingest_batches,
+        FROM deduped,
         jsonb_array_elements(payload_raw->'statusHistory') as rec
-        {where_sql}
     ),
     totals AS (
         SELECT
@@ -226,26 +256,26 @@ async def aggregate_kpi_summary(
     """
     avail_row = await conn.fetchrow(avail_query, *params)
 
-    # 5. Top Failure Reasons
-    fail_where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
+    # 5. Top Failure Reasons (inspection_results.fail_reason_code 원천값)
     fail_query = f"""
+    WITH {deduped_cte}
     SELECT
         (rec->>'fail_reason_code') as reason_code,
         COUNT(*) as count
-    FROM ingest_batches,
+    FROM deduped,
     jsonb_array_elements(payload_raw->'records') as rec
     WHERE (rec->>'fail_reason_code') IS NOT NULL
       AND (rec->>'fail_reason_code') != 'null'
-    {fail_where_sql}
     GROUP BY reason_code
     ORDER BY count DESC
     LIMIT 5
     """
     fail_rows = await conn.fetch(fail_query, *params)
 
-    # 6. Equipment Details
+    # 6. Equipment Details (inspection_results 기준, consistent with headline)
     equip_detail_query = f"""
-    WITH latest AS (
+    WITH {deduped_cte},
+    latest AS (
         SELECT DISTINCT ON (COALESCE(equipment_id, equipment_hash))
             COALESCE(equipment_id, equipment_hash) AS equipment_key,
             equipment_hash,
@@ -254,32 +284,43 @@ async def aggregate_kpi_summary(
         {where_sql}
         ORDER BY COALESCE(equipment_id, equipment_hash), dispatched_at DESC
     ),
-    agg AS (
+    uph AS (
         SELECT
             COALESCE(equipment_id, equipment_hash) AS equipment_key,
-            MIN(equipment_hash) as equipment_hash,
-            AVG((payload_raw->'lotSummary'->>'yield_pct')::float) as avg_yield,
-            SUM((payload_raw->'lotSummary'->>'total_units')::int) as total_units,
             AVG((payload_raw->'lotSummary'->>'total_units')::float /
                 NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
-        FROM ingest_batches
-        {where_sql}
+        FROM deduped
         GROUP BY COALESCE(equipment_id, equipment_hash)
+    ),
+    agg AS (
+        SELECT
+            COALESCE(d.equipment_id, d.equipment_hash) AS equipment_key,
+            MIN(d.equipment_hash) as equipment_hash,
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') IS NOT NULL) as total_units,
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') = 'PASS') as pass_count
+        FROM deduped d,
+        jsonb_array_elements(d.payload_raw->'records') as rec
+        GROUP BY COALESCE(d.equipment_id, d.equipment_hash)
     )
     SELECT
         a.equipment_key,
         COALESCE(l.equipment_hash, a.equipment_hash) AS equipment_hash,
-        a.avg_yield,
+        CASE WHEN a.total_units > 0
+             THEN ROUND(100.0 * a.pass_count / a.total_units, 2)
+             ELSE 0 END AS avg_yield,
         a.total_units,
-        a.avg_uph,
+        COALESCE(u.avg_uph, 0) AS avg_uph,
         COALESCE(l.status, 'UNKNOWN') as status
-    FROM agg a LEFT JOIN latest l USING (equipment_key)
+    FROM agg a
+    LEFT JOIN latest l USING (equipment_key)
+    LEFT JOIN uph u USING (equipment_key)
     """
     equip_detail_rows = await conn.fetch(equip_detail_query, *params)
-    
+
     # 7. MTBF Calculation
     mtbf_query = f"""
-    WITH alarm_times AS (
+    WITH {deduped_cte},
+    alarm_times AS (
         SELECT
             COALESCE(equipment_id, equipment_hash) AS equipment_key,
             (rec->>'time')::timestamptz as alarm_ts,
@@ -287,27 +328,35 @@ async def aggregate_kpi_summary(
                 PARTITION BY COALESCE(equipment_id, equipment_hash)
                 ORDER BY (rec->>'time')::timestamptz
             ) as next_alarm_ts
-        FROM ingest_batches,
+        FROM deduped,
         jsonb_array_elements(payload_raw->'alarmHistory') as rec
-        {where_sql}
     )
     SELECT AVG(EXTRACT(EPOCH FROM (next_alarm_ts - alarm_ts)) / 3600.0) as avg_mtbf_hours
     FROM alarm_times
     WHERE next_alarm_ts IS NOT NULL
     """
     mtbf_row = await conn.fetchrow(mtbf_query, *params)
-    
+
+    # Total equipment count: when filtering a single equipment, the denominator
+    # is that one equipment; otherwise it is the configured equipment master.
+    observed_equip = equip_row["observed_equip_count"] or 0
+    if equipment_id:
+        total_equip_count = observed_equip
+    else:
+        master = settings.equipment_master_list
+        total_equip_count = len(master) if master else observed_equip
+
     return {
-        "totalUnits": base_row["total_units"] or 0,
-        "totalInspected": base_row["total_units"] or 0,
-        "totalFail": base_row["total_fail"] or 0,
-        "avgYieldPct": base_row["avg_yield_pct"] or 0.0,
+        "totalUnits": base_row["total_inspected"] or 0,
+        "totalInspected": base_row["total_inspected"] or 0,
+        "totalFail": base_row["fail_count"] or 0,
+        "avgYieldPct": float(base_row["yield_pct"]) if base_row["yield_pct"] is not None else 0.0,
         "avgUph": base_row["avg_uph"] or 0.0,
         "marginalCount": oracle_row["marginal_count"] or 0,
         "dangerCount": oracle_row["danger_count"] or 0,
         "warningCount": oracle_row["warning_count"] or 0,
         "activeEquipmentCount": equip_row["active_equip_count"] or 0,
-        "totalEquipmentCount": equip_row["total_equip_count"] or 0,
+        "totalEquipmentCount": total_equip_count,
         "avgAvailabilityPct": float(avail_row["avg_availability_pct"] or 0.0),
         "totalDowntimeMin": float(avail_row["total_downtime_min"] or 0.0),
         "avgMtbfHours": float(mtbf_row["avg_mtbf_hours"]) if mtbf_row and mtbf_row["avg_mtbf_hours"] else None,
