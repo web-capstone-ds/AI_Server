@@ -68,6 +68,8 @@ class AnonymizedLotRecord(BaseExtraModel):
     fail_count: int
     yield_pct: float
     lot_duration_sec: int
+    # Cpk용 lot 단위 치수 분포 집계(PASS+FAIL 전체). {metric: {n, mean, stdev, min, max}}
+    geometric_stats: Optional[Dict[str, Any]] = None
 
 class OracleAnalysisRecord(BaseExtraModel):
     message_id: str

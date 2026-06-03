@@ -32,7 +32,10 @@ def compute_derived(batch: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]
     records = batch.get("records") or []
 
     per_slot, error_dist = _slot_and_error_stats(records)
-    geometric = _metric_stats(records, "geometric", GEOMETRIC_METRICS)
+    # Cpk: lot 단위 치수 분포(PASS+FAIL 전체, Historian 집계)가 있으면 우선 사용.
+    # 없으면(구버전 데이터) FAIL 레코드 기반 per-record 통계로 fallback.
+    geometric = _lot_geometric_stats(batch, GEOMETRIC_METRICS) \
+        or _metric_stats(records, "geometric", GEOMETRIC_METRICS)
     singulation = _metric_stats(records, "singulation", SINGULATION_METRICS)
     histograms = _histogram_buckets(records, "geometric", GEOMETRIC_METRICS[:1])
 
@@ -132,6 +135,49 @@ def _slot_and_error_stats(records: List[Dict[str, Any]]):
         })
 
     return per_slot, error_dist
+
+
+def _lot_geometric_stats(batch: Dict[str, Any], metrics: List[str]) -> Optional[List[Dict[str, Any]]]:
+    """lotSummary.geometric_stats(Historian lot 단위 집계) -> MetricStat 목록.
+
+    PASS drop 영향을 받지 않는 전체(PASS+FAIL) 분포 기반 n/mean/stdev.
+    usl/lsl/cpk 등 규격 의존 필드는 백엔드가 recipe_specs로 채우므로 None.
+    집계가 없거나 유효 metric이 하나도 없으면 None(호출부가 per-record로 fallback).
+    """
+    lot = batch.get("lotSummary")
+    if not isinstance(lot, dict):
+        return None
+    agg = lot.get("geometric_stats") or lot.get("geometricStats")
+    if not isinstance(agg, dict):
+        return None
+
+    result: List[Dict[str, Any]] = []
+    for metric in metrics:
+        stat = agg.get(metric)
+        if not isinstance(stat, dict):
+            continue
+        n = _to_int(stat.get("n"))
+        mean = _to_float(stat.get("mean"))
+        if n is None or n <= 0 or mean is None:
+            continue
+        stdev = _to_float(stat.get("stdev"))
+        result.append({
+            "metric": metric,
+            "n": n,
+            "mean": _round(mean),
+            "stdev": _round(stdev) if stdev is not None else 0.0,
+            "min": _round(_to_float(stat.get("min"))),
+            "max": _round(_to_float(stat.get("max"))),
+            "p50": None,
+            "p95": None,
+            "p99": None,
+            "usl": None,
+            "lsl": None,
+            "cp": None,
+            "cpk": None,
+            "inSpecPct": None,
+        })
+    return result or None
 
 
 def _metric_stats(records: List[Dict[str, Any]], section: str, metrics: List[str]) -> List[Dict[str, Any]]:
