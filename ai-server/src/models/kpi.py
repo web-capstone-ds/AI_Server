@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class ReportPeriod(BaseModel):
     start: str
@@ -12,10 +12,21 @@ class FailReasonCount(BaseModel):
 class EquipmentKpi(BaseModel):
     equipmentId: str
     equipmentHash: Optional[str] = None
+    recipeId: Optional[str] = None
+    totalFail: int = 0
+    yieldPct: Optional[float] = None
     avgYieldPct: float
     totalUnits: int
+    uph: Optional[float] = None
     avgUph: float
-    status: str # RUN / IDLE / STOP
+    availabilityPct: Optional[float] = None
+    avgAvailabilityPct: float = 0.0
+    downtimeMin: float = 0.0
+    mtbfHours: Optional[float] = None
+    alarmCount: int = 0
+    marginalCount: int = 0
+    topFailReasons: List[FailReasonCount] = Field(default_factory=list)
+    status: Optional[str] = None # RUN / IDLE / STOP
 
 class KpiSummaryResponse(BaseModel):
     period: ReportPeriod

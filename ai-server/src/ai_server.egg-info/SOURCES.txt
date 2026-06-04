@@ -20,6 +20,7 @@ src/db/embeddings.py
 src/db/ingest_jobs.py
 src/db/pool.py
 src/db/reports.py
+src/db/status_log.py
 src/llm/__init__.py
 src/llm/client.py
 src/llm/prompts.py
@@ -29,8 +30,10 @@ src/models/dispatch_batch.py
 src/models/kpi.py
 src/models/query.py
 src/models/report.py
+src/models/status_snapshot.py
 src/pipeline/__init__.py
 src/pipeline/chunker.py
+src/pipeline/derived_stats.py
 src/pipeline/embedder.py
 src/pipeline/job_worker.py
 src/pipeline/jobs.py
@@ -43,7 +46,9 @@ src/scheduler/__init__.py
 src/scheduler/report_scheduler.py
 src/utils/__init__.py
 src/utils/auth.py
+src/utils/envelope.py
 src/utils/logging_config.py
+src/utils/service_jwt.py
 tests/test_batches.py
 tests/test_e2e.py
 tests/test_embedder.py

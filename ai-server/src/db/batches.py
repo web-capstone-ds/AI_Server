@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import asyncpg
 import structlog
@@ -38,26 +38,25 @@ async def check_batch_id_exists(conn: asyncpg.Connection, batch_id: str) -> Opti
 
 async def get_batch_by_id(conn: asyncpg.Connection, batch_id: str) -> Optional[Dict[str, Any]]:
     query = """
-    SELECT batch_id, lot_hash, equipment_hash, equipment_id, total_records, 
-           records_summary, dispatched_at, ingested_at, pushed_to_backend 
+    SELECT payload_raw
     FROM ingest_batches 
     WHERE batch_id = $1
     """
     row = await conn.fetchrow(query, batch_id)
-    return dict(row) if row else None
+    if not row or row["payload_raw"] is None:
+        return None
+    payload = row["payload_raw"]
+    return json.loads(payload) if isinstance(payload, str) else dict(payload)
 
-async def list_batches(
-    conn: asyncpg.Connection, 
-    equipment_id: Optional[str] = None, 
+
+def _batch_where(
+    equipment_id: Optional[str] = None,
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
-    limit: int = 50,
-    offset: int = 0
-) -> List[Dict[str, Any]]:
-    query = "SELECT batch_id, lot_hash, equipment_hash, equipment_id, total_records, dispatched_at, ingested_at FROM ingest_batches"
+) -> tuple[str, list[Any]]:
     where_clauses = []
-    params = []
-    
+    params: list[Any] = []
+
     if equipment_id:
         params.append(equipment_id)
         where_clauses.append(
@@ -70,15 +69,92 @@ async def list_batches(
     if to_date:
         params.append(to_date)
         where_clauses.append(f"dispatched_at <= ${len(params)}")
-        
-    if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
-        
+
+    return (" WHERE " + " AND ".join(where_clauses)) if where_clauses else "", params
+
+
+def _to_batch_list_item(row: Dict[str, Any]) -> Dict[str, Any]:
+    lot_hash = row.get("lot_hash")
+    return {
+        "batchId": str(row.get("batch_id")) if row.get("batch_id") is not None else None,
+        "equipmentId": row.get("equipment_id"),
+        "equipmentHash": row.get("equipment_hash"),
+        "lotHashShort": lot_hash[:8] if lot_hash else None,
+        "recipeId": row.get("recipe_id"),
+        "lotStatus": row.get("lot_status"),
+        "dispatchedAt": row.get("dispatched_at"),
+        "lotEndAt": row.get("lot_end_at"),
+        "yieldPct": float(row["yield_pct"]) if row.get("yield_pct") is not None else None,
+        "totalUnits": row.get("total_units"),
+        "failCount": row.get("fail_count"),
+        "judgment": row.get("judgment"),
+        "severityCode": row.get("severity_code"),
+        "alarmCount": row.get("alarm_count") or 0,
+        "availabilityPct": float(row["availability_pct"]) if row.get("availability_pct") is not None else None,
+    }
+
+
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return default
+
+async def list_batches(
+    conn: asyncpg.Connection, 
+    equipment_id: Optional[str] = None, 
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> List[Dict[str, Any]]:
+    where_sql, params = _batch_where(equipment_id, from_date, to_date)
+    query = f"""
+    SELECT
+        batch_id,
+        lot_hash,
+        equipment_hash,
+        equipment_id,
+        dispatched_at,
+        payload_raw->'lotSummary'->>'recipeId' as recipe_id_camel,
+        payload_raw->'lotSummary'->>'recipe_id' as recipe_id_snake,
+        COALESCE(
+            payload_raw->'lotSummary'->>'recipeId',
+            payload_raw->'lotSummary'->>'recipe_id',
+            payload_raw->'lotSummary'->>'recipeHash'
+        ) as recipe_id,
+        COALESCE(payload_raw->'lotSummary'->>'lotStatus', payload_raw->'lotSummary'->>'lot_status') as lot_status,
+        COALESCE(payload_raw->'lotSummary'->>'lotEndAt', payload_raw->'lotSummary'->>'lot_end_at')::timestamptz as lot_end_at,
+        COALESCE(payload_raw->'lotSummary'->>'yieldPct', payload_raw->'lotSummary'->>'yield_pct')::float as yield_pct,
+        COALESCE(payload_raw->'lotSummary'->>'totalUnits', payload_raw->'lotSummary'->>'total_units')::int as total_units,
+        COALESCE(payload_raw->'lotSummary'->>'failCount', payload_raw->'lotSummary'->>'fail_count')::int as fail_count,
+        payload_raw->'oracleAnalysis'->0->>'judgment' as judgment,
+        CASE payload_raw->'oracleAnalysis'->0->>'judgment'
+            WHEN 'DANGER' THEN 3
+            WHEN 'WARNING' THEN 2
+            ELSE 1
+        END as severity_code,
+        COALESCE(jsonb_array_length(payload_raw->'alarmHistory'), 0) as alarm_count,
+        NULL::float as availability_pct
+    FROM ingest_batches
+    {where_sql}
+    """
     query += f" ORDER BY dispatched_at DESC LIMIT ${len(params)+1} OFFSET ${len(params)+2}"
     params.extend([limit, offset])
     
     rows = await conn.fetch(query, *params)
-    return [dict(row) for row in rows]
+    return [_to_batch_list_item(dict(row)) for row in rows]
+
+
+async def count_batches(
+    conn: asyncpg.Connection,
+    equipment_id: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+) -> int:
+    where_sql, params = _batch_where(equipment_id, from_date, to_date)
+    row = await conn.fetchrow(f"SELECT COUNT(*) as count FROM ingest_batches{where_sql}", *params)
+    return int(row["count"] or 0)
 
 async def get_latest_batches_per_equipment(conn: asyncpg.Connection) -> List[Dict[str, Any]]:
     query = """
@@ -344,24 +420,43 @@ async def aggregate_kpi_summary(
         SELECT
             COALESCE(d.equipment_id, d.equipment_hash) AS equipment_key,
             MIN(d.equipment_hash) as equipment_hash,
+            (array_agg(COALESCE(
+                d.payload_raw->'lotSummary'->>'recipeId',
+                d.payload_raw->'lotSummary'->>'recipe_id',
+                d.payload_raw->'lotSummary'->>'recipeHash'
+            ) ORDER BY d.dispatched_at DESC))[1] as recipe_id,
             COUNT(*) FILTER (WHERE (rec->>'overall_result') IS NOT NULL) as total_units,
+            COUNT(*) FILTER (WHERE (rec->>'overall_result') = 'FAIL') as total_fail,
             COUNT(*) FILTER (WHERE (rec->>'overall_result') = 'PASS') as pass_count
         FROM deduped d,
         jsonb_array_elements(d.payload_raw->'records') as rec
         GROUP BY COALESCE(d.equipment_id, d.equipment_hash)
+    ),
+    batch_meta AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+            SUM(COALESCE(jsonb_array_length(payload_raw->'alarmHistory'), 0)) as alarm_count,
+            COUNT(*) FILTER (WHERE payload_raw->'oracleAnalysis'->0->>'judgment' = 'WARNING') as marginal_count
+        FROM deduped
+        GROUP BY COALESCE(equipment_id, equipment_hash)
     )
     SELECT
         COALESCE(s.equipment_key, a.equipment_key) AS equipment_key,
         COALESCE(s.equipment_hash, a.equipment_hash) AS equipment_hash,
+        a.recipe_id,
         CASE WHEN COALESCE(a.total_units, 0) > 0
              THEN ROUND(100.0 * a.pass_count / a.total_units, 2)
              ELSE 0 END AS avg_yield,
         COALESCE(a.total_units, 0) AS total_units,
+        COALESCE(a.total_fail, 0) AS total_fail,
         COALESCE(u.avg_uph, 0) AS avg_uph,
+        COALESCE(m.alarm_count, 0) as alarm_count,
+        COALESCE(m.marginal_count, 0) as marginal_count,
         COALESCE(s.status, 'UNKNOWN') as status
     FROM status_latest s
     FULL OUTER JOIN agg a ON a.equipment_key = s.equipment_key
     LEFT JOIN uph u ON u.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
+    LEFT JOIN batch_meta m ON m.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
     ORDER BY total_units DESC, equipment_key
     """
     equip_detail_rows = await conn.fetch(equip_detail_query, *ed_params)
@@ -415,13 +510,180 @@ async def aggregate_kpi_summary(
             {
                 "equipmentId": r["equipment_key"],
                 "equipmentHash": r["equipment_hash"],
+                "recipeId": _row_get(r, "recipe_id"),
+                "totalFail": _row_get(r, "total_fail", 0) or 0,
+                "yieldPct": r["avg_yield"] or 0.0,
                 "avgYieldPct": r["avg_yield"] or 0.0,
                 "totalUnits": r["total_units"] or 0,
+                "uph": r["avg_uph"] or 0.0,
                 "avgUph": r["avg_uph"] or 0.0,
+                "availabilityPct": 0.0,
+                "avgAvailabilityPct": 0.0,
+                "downtimeMin": 0.0,
+                "mtbfHours": None,
+                "alarmCount": _row_get(r, "alarm_count", 0) or 0,
+                "marginalCount": _row_get(r, "marginal_count", 0) or 0,
+                "topFailReasons": [],
                 "status": r["status"]
             } for r in equip_detail_rows
         ],
     }
+
+
+def _group_label(group_by: str, key: datetime | str) -> str:
+    if group_by == "day" and isinstance(key, datetime):
+        return key.strftime("%m-%d")
+    if group_by == "week" and isinstance(key, datetime):
+        start = key.date()
+        end = start + timedelta(days=6)
+        return f"{start:%m/%d}-{end:%m/%d}"
+    return str(key)
+
+
+async def aggregate_kpi_groups(
+    conn: asyncpg.Connection,
+    group_by: Optional[str],
+    equipment_id: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+) -> List[Dict[str, Any]]:
+    if group_by not in {"day", "week", "equipment"}:
+        return []
+
+    where_sql, params = _batch_where(equipment_id, from_date, to_date)
+    deduped_cte = f"""
+    deduped AS (
+        SELECT DISTINCT ON (lot_hash) *
+        FROM ingest_batches
+        {where_sql}
+        ORDER BY lot_hash, dispatched_at DESC
+    )
+    """
+
+    if group_by in {"day", "week"}:
+        bucket_expr = "date_trunc('day', dispatched_at)" if group_by == "day" else "date_trunc('week', dispatched_at)"
+        query = f"""
+        WITH {deduped_cte},
+        recs AS (
+            SELECT
+                {bucket_expr} as bucket,
+                COUNT(*) FILTER (WHERE rec->>'overall_result' IS NOT NULL) as total_units,
+                COUNT(*) FILTER (WHERE rec->>'overall_result' = 'FAIL') as total_fail,
+                COUNT(*) FILTER (WHERE rec->>'overall_result' = 'PASS') as pass_count
+            FROM deduped,
+            jsonb_array_elements(payload_raw->'records') as rec
+            GROUP BY bucket
+        ),
+        lots AS (
+            SELECT
+                {bucket_expr} as bucket,
+                AVG((payload_raw->'lotSummary'->>'total_units')::float /
+                    NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+            FROM deduped
+            GROUP BY bucket
+        )
+        SELECT
+            recs.bucket,
+            recs.total_units,
+            recs.total_fail,
+            CASE WHEN recs.total_units > 0
+                 THEN ROUND(100.0 * recs.pass_count / recs.total_units, 2)
+                 ELSE 0 END as avg_yield_pct,
+            COALESCE(lots.avg_uph, 0) as avg_uph
+        FROM recs
+        LEFT JOIN lots ON lots.bucket = recs.bucket
+        ORDER BY recs.bucket
+        """
+        rows = await conn.fetch(query, *params)
+        groups = []
+        for row in rows:
+            bucket = row["bucket"]
+            key = bucket.strftime("%Y-%m-%d") if group_by == "day" else f"{bucket.isocalendar().year}-W{bucket.isocalendar().week:02d}"
+            groups.append({
+                "key": key,
+                "label": _group_label(group_by, bucket),
+                "totalUnits": row["total_units"] or 0,
+                "totalFail": row["total_fail"] or 0,
+                "avgYieldPct": float(row["avg_yield_pct"] or 0.0),
+                "avgUph": float(row["avg_uph"] or 0.0),
+                "avgAvailabilityPct": 0.0,
+                "totalDowntimeMin": 0.0,
+                "avgMtbfHours": None,
+                "topFailReasons": [],
+            })
+        return groups
+
+    query = f"""
+    WITH {deduped_cte},
+    recs AS (
+        SELECT
+            COALESCE(d.equipment_id, d.equipment_hash) as equipment_key,
+            MIN(d.equipment_hash) as equipment_hash,
+            (array_agg(COALESCE(
+                d.payload_raw->'lotSummary'->>'recipeId',
+                d.payload_raw->'lotSummary'->>'recipe_id',
+                d.payload_raw->'lotSummary'->>'recipeHash'
+            ) ORDER BY d.dispatched_at DESC))[1] as recipe_id,
+            COUNT(*) FILTER (WHERE rec->>'overall_result' IS NOT NULL) as total_units,
+            COUNT(*) FILTER (WHERE rec->>'overall_result' = 'FAIL') as total_fail,
+            COUNT(*) FILTER (WHERE rec->>'overall_result' = 'PASS') as pass_count
+        FROM deduped d,
+        jsonb_array_elements(d.payload_raw->'records') as rec
+        GROUP BY COALESCE(d.equipment_id, d.equipment_hash)
+    ),
+    batch_meta AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) as equipment_key,
+            SUM(COALESCE(jsonb_array_length(payload_raw->'alarmHistory'), 0)) as alarm_count,
+            COUNT(*) FILTER (WHERE payload_raw->'oracleAnalysis'->0->>'judgment' = 'WARNING') as marginal_count
+        FROM deduped
+        GROUP BY COALESCE(equipment_id, equipment_hash)
+    ),
+    uph AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) as equipment_key,
+            AVG((payload_raw->'lotSummary'->>'total_units')::float /
+                NULLIF((payload_raw->'lotSummary'->>'lot_duration_sec')::float, 0) * 3600) as avg_uph
+        FROM deduped
+        GROUP BY COALESCE(equipment_id, equipment_hash)
+    )
+    SELECT
+        recs.equipment_key,
+        recs.equipment_hash,
+        recs.recipe_id,
+        recs.total_units,
+        recs.total_fail,
+        CASE WHEN recs.total_units > 0
+             THEN ROUND(100.0 * recs.pass_count / recs.total_units, 2)
+             ELSE 0 END as avg_yield_pct,
+        COALESCE(uph.avg_uph, 0) as avg_uph,
+        COALESCE(batch_meta.alarm_count, 0) as alarm_count,
+        COALESCE(batch_meta.marginal_count, 0) as marginal_count
+    FROM recs
+    LEFT JOIN uph ON uph.equipment_key = recs.equipment_key
+    LEFT JOIN batch_meta ON batch_meta.equipment_key = recs.equipment_key
+    ORDER BY recs.total_units DESC, recs.equipment_key
+    """
+    rows = await conn.fetch(query, *params)
+    return [
+        {
+            "key": r["equipment_key"],
+            "name": r["equipment_key"],
+            "equipmentHash": r["equipment_hash"],
+            "recipeId": r["recipe_id"],
+            "totalUnits": r["total_units"] or 0,
+            "totalFail": r["total_fail"] or 0,
+            "avgYieldPct": float(r["avg_yield_pct"] or 0.0),
+            "yieldPct": float(r["avg_yield_pct"] or 0.0),
+            "avgUph": float(r["avg_uph"] or 0.0),
+            "avgAvailabilityPct": 0.0,
+            "totalDowntimeMin": 0.0,
+            "avgMtbfHours": None,
+            "alarmCount": r["alarm_count"] or 0,
+            "marginalCount": r["marginal_count"] or 0,
+            "topFailReasons": [],
+        } for r in rows
+    ]
 
 async def get_latest_batches(
     conn: asyncpg.Connection,

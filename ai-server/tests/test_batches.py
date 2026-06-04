@@ -31,6 +31,7 @@ def test_get_batches_invalid_jwt():
 async def test_get_batches_with_jwt(mock_get_pool):
     mock_conn = AsyncMock()
     mock_conn.fetch.return_value = []
+    mock_conn.fetchrow.return_value = {"count": 0}
     mock_pool = MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
     mock_get_pool.return_value = mock_pool
@@ -38,13 +39,23 @@ async def test_get_batches_with_jwt(mock_get_pool):
     token = create_test_jwt()
     response = client.get("/api/batches", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
-    assert response.json() == []
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["data"]["items"] == []
+    assert body["data"]["page"] == {
+        "number": 1,
+        "size": 50,
+        "totalElements": 0,
+        "totalPages": 0,
+        "hasNext": False,
+    }
 
 @pytest.mark.asyncio
 @patch("src.db.pool.db_pool.get_pool")
 async def test_get_batches_filters_by_plain_id_or_equipment_hash(mock_get_pool):
     mock_conn = AsyncMock()
     mock_conn.fetch.return_value = []
+    mock_conn.fetchrow.return_value = {"count": 0}
     mock_pool = MagicMock()
     mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
     mock_get_pool.return_value = mock_pool

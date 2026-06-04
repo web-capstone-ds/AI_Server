@@ -1,8 +1,15 @@
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, HTTPException
 from src.db.pool import db_pool
-from src.db.batches import list_batches, get_batch_by_id, get_latest_batch_full, aggregate_kpi_summary
+from src.db.batches import (
+    list_batches,
+    count_batches,
+    get_batch_by_id,
+    get_latest_batch_full,
+    aggregate_kpi_summary,
+    aggregate_kpi_groups,
+)
 from src.models.kpi import KpiSummaryResponse, ReportPeriod
 from src.utils.auth import verify_backend_jwt
 from src.utils.envelope import envelope
@@ -12,7 +19,14 @@ import structlog
 router = APIRouter(prefix="/api/batches", tags=["batches"])
 logger = structlog.get_logger()
 
-@router.get("", response_model=List[dict])
+
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+@router.get("")
 async def get_batches(
     equipmentId: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
@@ -24,17 +38,27 @@ async def get_batches(
     """
     List batches with filtering and pagination.
     """
-    # Parse dates
     try:
-        start = datetime.fromisoformat(from_date) if from_date else None
-        end = datetime.fromisoformat(to_date) if to_date else None
+        start = _parse_iso(from_date)
+        end = _parse_iso(to_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
     offset = (page - 1) * size
     
     async with db_pool.get_pool().acquire() as conn:
         rows = await list_batches(conn, equipmentId, start, end, size, offset)
-        return rows
+        total = await count_batches(conn, equipmentId, start, end)
+    total_pages = (total + size - 1) // size if total else 0
+    return envelope({
+        "items": rows,
+        "page": {
+            "number": page,
+            "size": size,
+            "totalElements": total,
+            "totalPages": total_pages,
+            "hasNext": page < total_pages,
+        },
+    })
 
 @router.get("/latest")
 async def get_latest(
@@ -60,6 +84,7 @@ async def get_kpi(
     equipmentId: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
+    groupBy: Optional[str] = Query(None),
     _ = Depends(verify_backend_jwt)
 ):
     """
@@ -69,13 +94,16 @@ async def get_kpi(
     {period, summary: <KpiSummaryResponse>, groups: []}.
     """
     try:
-        start = datetime.fromisoformat(from_date) if from_date else None
-        end = datetime.fromisoformat(to_date) if to_date else None
+        start = _parse_iso(from_date)
+        end = _parse_iso(to_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO 8601.")
+    if groupBy is not None and groupBy not in {"day", "week", "equipment"}:
+        raise HTTPException(status_code=400, detail="groupBy must be one of: day, week, equipment")
 
     async with db_pool.get_pool().acquire() as conn:
         kpi_data = await aggregate_kpi_summary(conn, equipmentId, start, end)
+        groups = await aggregate_kpi_groups(conn, groupBy, equipmentId, start, end)
 
         period = ReportPeriod(start=from_date or "earliest", end=to_date or "now")
         kpi_data["period"] = period
@@ -89,20 +117,21 @@ async def get_kpi(
         data = {
             "period": period.model_dump(mode="json"),
             "summary": summary.model_dump(mode="json"),
-            "groups": [],
+            "groups": groups,
         }
         return envelope(data)
 
-@router.get("/{batchId}", response_model=dict)
+@router.get("/{batchId}")
 async def get_detail(
     batchId: str,
     _ = Depends(verify_backend_jwt)
 ):
     """
-    Get full batch details (raw payload).
+    Get full batch details in the same envelope/detail shape as /latest.
     """
     async with db_pool.get_pool().acquire() as conn:
         batch = await get_batch_by_id(conn, batchId)
-        if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
-        return batch
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    derived = compute_derived(batch)
+    return envelope({"batch": batch, "derived": derived})
