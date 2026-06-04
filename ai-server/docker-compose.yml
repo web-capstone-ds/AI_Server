@@ -9,6 +9,7 @@ services:
       # .env의 PG_HOST=localhost는 호스트 직접 실행용. Docker 내부에서는 서비스명으로 덮어씀.
       PG_HOST: pgvector
       PG_PORT: "5432"
+      EMBEDDING_USE_ONNX: "false"
     # 리눅스에서 BACKEND_SERVER_URL=http://host.docker.internal:8080 해석을 위해 필요.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -31,7 +32,7 @@ services:
       POSTGRES_USER: ai_server
       POSTGRES_PASSWORD: ${PG_PASSWORD:-changeit}
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - pgvector_data:/var/lib/postgresql/data
     healthcheck:

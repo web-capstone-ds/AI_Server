@@ -17,8 +17,24 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_lot_embeddings_recipe")
     op.execute("""
-        ALTER TABLE lot_embeddings
-        RENAME COLUMN recipe_id TO recipe_hash
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'lot_embeddings'
+                  AND column_name = 'recipe_id'
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'lot_embeddings'
+                  AND column_name = 'recipe_hash'
+            ) THEN
+                ALTER TABLE lot_embeddings
+                RENAME COLUMN recipe_id TO recipe_hash;
+            END IF;
+        END $$;
     """)
     op.execute("""
         UPDATE lot_embeddings
@@ -69,8 +85,24 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_lot_embeddings_recipe_hash")
     op.execute("""
-        ALTER TABLE lot_embeddings
-        RENAME COLUMN recipe_hash TO recipe_id
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'lot_embeddings'
+                  AND column_name = 'recipe_hash'
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'lot_embeddings'
+                  AND column_name = 'recipe_id'
+            ) THEN
+                ALTER TABLE lot_embeddings
+                RENAME COLUMN recipe_hash TO recipe_id;
+            END IF;
+        END $$;
     """)
     op.execute("""
         CREATE INDEX IF NOT EXISTS idx_lot_embeddings_recipe
