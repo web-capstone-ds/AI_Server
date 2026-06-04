@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from anthropic import APITimeoutError
 from src.db.pool import db_pool
@@ -12,6 +14,41 @@ import structlog
 
 router = APIRouter(prefix="/api/query", tags=["query"])
 logger = structlog.get_logger()
+
+
+ALARM_RECOMMENDATION_PATTERN = re.compile(
+    r"\[권고\]\s*제어 추천\s+ALARM-(?P<level>[A-Z]+)\s*\n"
+    r"(?P<code>[A-Z0-9_]+)-?\s*\n"
+    r"권고 조치:\s*(?P<action>[^\n]+)",
+    re.MULTILINE,
+)
+
+
+def normalize_mobile_alarm_recommendations(answer: str) -> str:
+    def replacement(match: re.Match[str]) -> str:
+        level = match.group("level").strip().upper()
+        code = match.group("code").strip().upper()
+        action = normalize_recommended_action(match.group("action"))
+        title = summarize_alarm_title(level, code, action)
+        prefix = f"[{level}]:" if level == "CRITICAL" else f"[{level}]"
+        return f"{prefix} {title}\n권고 조치: {action}"
+
+    return ALARM_RECOMMENDATION_PATTERN.sub(replacement, answer)
+
+
+def normalize_recommended_action(action: str) -> str:
+    normalized = action.strip()
+    normalized = re.sub(r"\s*/\s*", "/", normalized)
+    normalized = normalized.replace("상태조회", "상태 조회")
+    return normalized
+
+
+def summarize_alarm_title(level: str, code: str, action: str) -> str:
+    if level == "WARNING" and ("VISION" in code or "RECIPE" in code or "레시피" in action):
+        return "LOT 레시피 이상"
+    if level == "CRITICAL" and ("EAP" in code or "DISCON" in code or "상태 조회" in action):
+        return "장비 정지"
+    return "장비 경보 발생"
 
 
 @router.post("", response_model=QueryResponse)
@@ -63,6 +100,8 @@ async def query_ai(
         except Exception as e:
             logger.error("query_llm_failed", error=str(e))
             raise HTTPException(status_code=500, detail="AI 분석 중 오류가 발생했습니다.")
+
+        answer = normalize_mobile_alarm_recommendations(answer)
 
         sources = [
             Source(

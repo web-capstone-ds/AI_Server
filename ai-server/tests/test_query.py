@@ -60,6 +60,41 @@ def test_query_ai_success(mock_db_pool, mock_retriever, mock_llm):
     assert len(data["sources"]) == 1
     assert data["confidence"] > 0
 
+def test_query_ai_normalizes_mobile_alarm_recommendations(mock_db_pool, mock_retriever, mock_llm):
+    mock_retriever.return_value = [
+        {
+            "chunk_type": "alarm",
+            "chunk_text": "alarm content",
+            "lot_hash": "hash1",
+            "equipment_id": "EQ1",
+            "recipe_hash": "recipehash1",
+            "yield_pct": 98.5,
+            "dispatched_at": "2024-01-01",
+            "distance": 0.1
+        }
+    ]
+    mock_llm.return_value = (
+        "[권고] 제어 추천 ALARM-CRITICAL\n"
+        "EAP_DISCONNNECTED-\n"
+        "권고 조치: 상태조회\n\n"
+        "[권고] 제어 추천 ALARM-WARNING\n"
+        "VISION_SCOE_ERR-\n"
+        "권고 조치: 레시피 재로드 / LOT 중단"
+    )
+
+    response = client.post(
+        "/api/query",
+        json={"question": "모바일 알람 권고 알려줘"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == (
+        "[CRITICAL]: 장비 정지\n"
+        "권고 조치: 상태 조회\n\n"
+        "[WARNING] LOT 레시피 이상\n"
+        "권고 조치: 레시피 재로드/LOT 중단"
+    )
+
 def test_query_ai_empty_db(mock_db_pool, mock_retriever):
     mock_retriever.return_value = []
     
