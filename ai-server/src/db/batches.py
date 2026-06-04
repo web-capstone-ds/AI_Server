@@ -100,6 +100,194 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
     except (KeyError, TypeError):
         return default
 
+
+def _status_where(
+    equipment_id: Optional[str] = None,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+) -> tuple[str, list[Any]]:
+    clauses = []
+    params: list[Any] = []
+    if equipment_id:
+        params.append(equipment_id)
+        clauses.append(
+            f"(equipment_id = ${len(params)}::text OR equipment_hash = ${len(params)}::text "
+            f"OR equipment_key = ${len(params)}::text)"
+        )
+    if from_date:
+        params.append(from_date)
+        clauses.append(f"ts >= ${len(params)}::timestamptz")
+    if to_date:
+        params.append(to_date)
+        clauses.append(f"ts <= ${len(params)}::timestamptz")
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
+
+
+async def _status_metrics_by_equipment(
+    conn: asyncpg.Connection,
+    equipment_id: Optional[str],
+    from_date: Optional[datetime],
+    to_date: Optional[datetime],
+) -> Dict[str, Dict[str, Any]]:
+    where_sql, params = _status_where(equipment_id, from_date, to_date)
+    query = f"""
+    WITH sh AS (
+        SELECT
+            equipment_key,
+            status,
+            ts,
+            LEAD(ts) OVER (PARTITION BY equipment_key ORDER BY ts) as next_ts
+        FROM equipment_status_log
+        {where_sql}
+    ),
+    totals AS (
+        SELECT
+            equipment_key,
+            SUM(CASE WHEN status = 'RUN' AND next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as run_sec,
+            SUM(CASE WHEN status = 'STOP' AND next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as stop_sec,
+            SUM(CASE WHEN next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as total_sec
+        FROM sh
+        GROUP BY equipment_key
+    )
+    SELECT
+        equipment_key,
+        ROUND(100.0 * run_sec / NULLIF(total_sec, 0), 2) as availability_pct,
+        stop_sec / 60.0 as downtime_min
+    FROM totals
+    """
+    rows = await conn.fetch(query, *params)
+    return {
+        r["equipment_key"]: {
+            "availabilityPct": float(r["availability_pct"] or 0.0),
+            "downtimeMin": float(r["downtime_min"] or 0.0),
+        }
+        for r in rows
+    }
+
+
+async def _status_metrics_by_time_group(
+    conn: asyncpg.Connection,
+    group_by: str,
+    equipment_id: Optional[str],
+    from_date: Optional[datetime],
+    to_date: Optional[datetime],
+) -> Dict[str, Dict[str, Any]]:
+    where_sql, params = _status_where(equipment_id, from_date, to_date)
+    bucket_expr = "date_trunc('day', ts)" if group_by == "day" else "date_trunc('week', ts)"
+    query = f"""
+    WITH sh AS (
+        SELECT
+            status,
+            ts,
+            {bucket_expr} as bucket,
+            LEAD(ts) OVER (PARTITION BY equipment_key ORDER BY ts) as next_ts
+        FROM equipment_status_log
+        {where_sql}
+    ),
+    totals AS (
+        SELECT
+            bucket,
+            SUM(CASE WHEN status = 'RUN' AND next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as run_sec,
+            SUM(CASE WHEN status = 'STOP' AND next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as stop_sec,
+            SUM(CASE WHEN next_ts IS NOT NULL THEN EXTRACT(EPOCH FROM (next_ts - ts)) ELSE 0 END) as total_sec
+        FROM sh
+        GROUP BY bucket
+    )
+    SELECT
+        bucket,
+        ROUND(100.0 * run_sec / NULLIF(total_sec, 0), 2) as availability_pct,
+        stop_sec / 60.0 as downtime_min
+    FROM totals
+    """
+    rows = await conn.fetch(query, *params)
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        bucket = r["bucket"]
+        key = bucket.strftime("%Y-%m-%d") if group_by == "day" else f"{bucket.isocalendar().year}-W{bucket.isocalendar().week:02d}"
+        out[key] = {
+            "avgAvailabilityPct": float(r["availability_pct"] or 0.0),
+            "totalDowntimeMin": float(r["downtime_min"] or 0.0),
+        }
+    return out
+
+
+async def _mtbf_by_equipment(
+    conn: asyncpg.Connection,
+    where_sql: str,
+    params: list[Any],
+) -> Dict[str, Optional[float]]:
+    query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (lot_hash) *
+        FROM ingest_batches
+        {where_sql}
+        ORDER BY lot_hash, dispatched_at DESC
+    ),
+    alarm_times AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+            (rec->>'time')::timestamptz as alarm_ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY COALESCE(equipment_id, equipment_hash)
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_alarm_ts
+        FROM deduped,
+        jsonb_array_elements(payload_raw->'alarmHistory') as rec
+    )
+    SELECT
+        equipment_key,
+        AVG(EXTRACT(EPOCH FROM (next_alarm_ts - alarm_ts)) / 3600.0) as mtbf_hours
+    FROM alarm_times
+    WHERE next_alarm_ts IS NOT NULL
+    GROUP BY equipment_key
+    """
+    rows = await conn.fetch(query, *params)
+    return {
+        r["equipment_key"]: float(r["mtbf_hours"]) if r["mtbf_hours"] is not None else None
+        for r in rows
+    }
+
+
+async def _mtbf_by_time_group(
+    conn: asyncpg.Connection,
+    group_by: str,
+    where_sql: str,
+    params: list[Any],
+) -> Dict[str, Optional[float]]:
+    bucket_expr = "date_trunc('day', alarm_ts)" if group_by == "day" else "date_trunc('week', alarm_ts)"
+    query = f"""
+    WITH deduped AS (
+        SELECT DISTINCT ON (lot_hash) *
+        FROM ingest_batches
+        {where_sql}
+        ORDER BY lot_hash, dispatched_at DESC
+    ),
+    alarm_times AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) AS equipment_key,
+            (rec->>'time')::timestamptz as alarm_ts,
+            LEAD((rec->>'time')::timestamptz) OVER (
+                PARTITION BY COALESCE(equipment_id, equipment_hash)
+                ORDER BY (rec->>'time')::timestamptz
+            ) as next_alarm_ts
+        FROM deduped,
+        jsonb_array_elements(payload_raw->'alarmHistory') as rec
+    )
+    SELECT
+        {bucket_expr} as bucket,
+        AVG(EXTRACT(EPOCH FROM (next_alarm_ts - alarm_ts)) / 3600.0) as mtbf_hours
+    FROM alarm_times
+    WHERE next_alarm_ts IS NOT NULL
+    GROUP BY bucket
+    """
+    rows = await conn.fetch(query, *params)
+    out: Dict[str, Optional[float]] = {}
+    for r in rows:
+        bucket = r["bucket"]
+        key = bucket.strftime("%Y-%m-%d") if group_by == "day" else f"{bucket.isocalendar().year}-W{bucket.isocalendar().week:02d}"
+        out[key] = float(r["mtbf_hours"]) if r["mtbf_hours"] is not None else None
+    return out
+
 async def list_batches(
     conn: asyncpg.Connection, 
     equipment_id: Optional[str] = None, 
@@ -416,6 +604,19 @@ async def aggregate_kpi_summary(
         FROM deduped
         GROUP BY COALESCE(equipment_id, equipment_hash)
     ),
+    yield_trends AS (
+        SELECT
+            equipment_key,
+            array_agg(yield_pct ORDER BY dispatched_at) FILTER (WHERE yield_pct IS NOT NULL) as yield_trend
+        FROM (
+            SELECT
+                COALESCE(equipment_id, equipment_hash) AS equipment_key,
+                dispatched_at,
+                COALESCE(payload_raw->'lotSummary'->>'yieldPct', payload_raw->'lotSummary'->>'yield_pct')::float as yield_pct
+            FROM deduped
+        ) t
+        GROUP BY equipment_key
+    ),
     agg AS (
         SELECT
             COALESCE(d.equipment_id, d.equipment_hash) AS equipment_key,
@@ -450,16 +651,50 @@ async def aggregate_kpi_summary(
         COALESCE(a.total_units, 0) AS total_units,
         COALESCE(a.total_fail, 0) AS total_fail,
         COALESCE(u.avg_uph, 0) AS avg_uph,
+        COALESCE(y.yield_trend, ARRAY[]::float[]) as yield_trend,
         COALESCE(m.alarm_count, 0) as alarm_count,
         COALESCE(m.marginal_count, 0) as marginal_count,
         COALESCE(s.status, 'UNKNOWN') as status
     FROM status_latest s
     FULL OUTER JOIN agg a ON a.equipment_key = s.equipment_key
     LEFT JOIN uph u ON u.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
+    LEFT JOIN yield_trends y ON y.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
     LEFT JOIN batch_meta m ON m.equipment_key = COALESCE(s.equipment_key, a.equipment_key)
     ORDER BY total_units DESC, equipment_key
     """
     equip_detail_rows = await conn.fetch(equip_detail_query, *ed_params)
+    equipment_status_metrics = await _status_metrics_by_equipment(conn, equipment_id, from_date, to_date)
+    equipment_mtbf = await _mtbf_by_equipment(conn, where_sql, batch_params)
+
+    fail_by_equipment_query = f"""
+    WITH {deduped_cte},
+    ranked AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) as equipment_key,
+            rec->>'fail_reason_code' as reason_code,
+            COUNT(*) as count,
+            ROW_NUMBER() OVER (
+                PARTITION BY COALESCE(equipment_id, equipment_hash)
+                ORDER BY COUNT(*) DESC
+            ) as rn
+        FROM deduped,
+        jsonb_array_elements(payload_raw->'records') as rec
+        WHERE rec->>'fail_reason_code' IS NOT NULL
+          AND rec->>'fail_reason_code' != 'null'
+        GROUP BY COALESCE(equipment_id, equipment_hash), rec->>'fail_reason_code'
+    )
+    SELECT equipment_key, reason_code, count
+    FROM ranked
+    WHERE rn <= 5
+    ORDER BY equipment_key, count DESC
+    """
+    fail_by_equipment_rows = await conn.fetch(fail_by_equipment_query, *batch_params)
+    fail_by_equipment: Dict[str, List[Dict[str, Any]]] = {}
+    for r in fail_by_equipment_rows:
+        fail_by_equipment.setdefault(r["equipment_key"], []).append({
+            "reason_code": r["reason_code"],
+            "count": r["count"],
+        })
 
     # 7. MTBF Calculation
     mtbf_query = f"""
@@ -517,13 +752,14 @@ async def aggregate_kpi_summary(
                 "totalUnits": r["total_units"] or 0,
                 "uph": r["avg_uph"] or 0.0,
                 "avgUph": r["avg_uph"] or 0.0,
-                "availabilityPct": 0.0,
-                "avgAvailabilityPct": 0.0,
-                "downtimeMin": 0.0,
-                "mtbfHours": None,
+                "availabilityPct": equipment_status_metrics.get(r["equipment_key"], {}).get("availabilityPct", 0.0),
+                "avgAvailabilityPct": equipment_status_metrics.get(r["equipment_key"], {}).get("availabilityPct", 0.0),
+                "downtimeMin": equipment_status_metrics.get(r["equipment_key"], {}).get("downtimeMin", 0.0),
+                "mtbfHours": equipment_mtbf.get(r["equipment_key"]),
                 "alarmCount": _row_get(r, "alarm_count", 0) or 0,
                 "marginalCount": _row_get(r, "marginal_count", 0) or 0,
-                "topFailReasons": [],
+                "topFailReasons": fail_by_equipment.get(r["equipment_key"], []),
+                "yieldTrend": [float(v) for v in (_row_get(r, "yield_trend", []) or [])],
                 "status": r["status"]
             } for r in equip_detail_rows
         ],
@@ -561,6 +797,8 @@ async def aggregate_kpi_groups(
     """
 
     if group_by in {"day", "week"}:
+        status_by_group = await _status_metrics_by_time_group(conn, group_by, equipment_id, from_date, to_date)
+        mtbf_by_group = await _mtbf_by_time_group(conn, group_by, where_sql, params)
         bucket_expr = "date_trunc('day', dispatched_at)" if group_by == "day" else "date_trunc('week', dispatched_at)"
         query = f"""
         WITH {deduped_cte},
@@ -606,13 +844,44 @@ async def aggregate_kpi_groups(
                 "totalFail": row["total_fail"] or 0,
                 "avgYieldPct": float(row["avg_yield_pct"] or 0.0),
                 "avgUph": float(row["avg_uph"] or 0.0),
-                "avgAvailabilityPct": 0.0,
-                "totalDowntimeMin": 0.0,
-                "avgMtbfHours": None,
+                "avgAvailabilityPct": status_by_group.get(key, {}).get("avgAvailabilityPct", 0.0),
+                "totalDowntimeMin": status_by_group.get(key, {}).get("totalDowntimeMin", 0.0),
+                "avgMtbfHours": mtbf_by_group.get(key),
                 "topFailReasons": [],
             })
         return groups
 
+    status_by_equipment = await _status_metrics_by_equipment(conn, equipment_id, from_date, to_date)
+    mtbf_by_equipment = await _mtbf_by_equipment(conn, where_sql, params)
+    fail_by_equipment_query = f"""
+    WITH {deduped_cte},
+    ranked AS (
+        SELECT
+            COALESCE(equipment_id, equipment_hash) as equipment_key,
+            rec->>'fail_reason_code' as reason_code,
+            COUNT(*) as count,
+            ROW_NUMBER() OVER (
+                PARTITION BY COALESCE(equipment_id, equipment_hash)
+                ORDER BY COUNT(*) DESC
+            ) as rn
+        FROM deduped,
+        jsonb_array_elements(payload_raw->'records') as rec
+        WHERE rec->>'fail_reason_code' IS NOT NULL
+          AND rec->>'fail_reason_code' != 'null'
+        GROUP BY COALESCE(equipment_id, equipment_hash), rec->>'fail_reason_code'
+    )
+    SELECT equipment_key, reason_code, count
+    FROM ranked
+    WHERE rn <= 5
+    ORDER BY equipment_key, count DESC
+    """
+    fail_rows = await conn.fetch(fail_by_equipment_query, *params)
+    fail_by_equipment: Dict[str, List[Dict[str, Any]]] = {}
+    for r in fail_rows:
+        fail_by_equipment.setdefault(r["equipment_key"], []).append({
+            "reason_code": r["reason_code"],
+            "count": r["count"],
+        })
     query = f"""
     WITH {deduped_cte},
     recs AS (
@@ -676,12 +945,12 @@ async def aggregate_kpi_groups(
             "avgYieldPct": float(r["avg_yield_pct"] or 0.0),
             "yieldPct": float(r["avg_yield_pct"] or 0.0),
             "avgUph": float(r["avg_uph"] or 0.0),
-            "avgAvailabilityPct": 0.0,
-            "totalDowntimeMin": 0.0,
-            "avgMtbfHours": None,
+            "avgAvailabilityPct": status_by_equipment.get(r["equipment_key"], {}).get("availabilityPct", 0.0),
+            "totalDowntimeMin": status_by_equipment.get(r["equipment_key"], {}).get("downtimeMin", 0.0),
+            "avgMtbfHours": mtbf_by_equipment.get(r["equipment_key"]),
             "alarmCount": r["alarm_count"] or 0,
             "marginalCount": r["marginal_count"] or 0,
-            "topFailReasons": [],
+            "topFailReasons": fail_by_equipment.get(r["equipment_key"], []),
         } for r in rows
     ]
 

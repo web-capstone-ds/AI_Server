@@ -26,6 +26,7 @@ class EquipmentKpi(BaseModel):
     alarmCount: int = 0
     marginalCount: int = 0
     topFailReasons: List[FailReasonCount] = Field(default_factory=list)
+    yieldTrend: List[float] = Field(default_factory=list)
     status: Optional[str] = None # RUN / IDLE / STOP
 
 class KpiSummaryResponse(BaseModel):

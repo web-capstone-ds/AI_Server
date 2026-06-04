@@ -23,6 +23,9 @@ logger = structlog.get_logger()
 GEOMETRIC_METRICS = ["dimension_w_mm", "dimension_l_mm", "dimension_h_mm", "kerf_width_um"]
 SINGULATION_METRICS = ["chipping_top_um", "chipping_bottom_um", "burr_height_um"]
 HISTOGRAM_BINS = 10
+DEFAULT_LIMITS = {
+    "dimension_w_mm": {"usl": 10.10, "lsl": 9.90},
+}
 
 
 def compute_derived(batch: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -171,8 +174,8 @@ def _lot_geometric_stats(batch: Dict[str, Any], metrics: List[str]) -> Optional[
             "p50": None,
             "p95": None,
             "p99": None,
-            "usl": None,
-            "lsl": None,
+            "usl": _limit(metric, "usl"),
+            "lsl": _limit(metric, "lsl"),
             "cp": None,
             "cpk": None,
             "inSpecPct": None,
@@ -198,8 +201,8 @@ def _metric_stats(records: List[Dict[str, Any]], section: str, metrics: List[str
             "p50": _round(np.percentile(arr, 50)),
             "p95": _round(np.percentile(arr, 95)),
             "p99": _round(np.percentile(arr, 99)),
-            "usl": None,
-            "lsl": None,
+            "usl": _limit(metric, "usl"),
+            "lsl": _limit(metric, "lsl"),
             "cp": None,
             "cpk": None,
             "inSpecPct": None,
@@ -220,8 +223,8 @@ def _histogram_buckets(records: List[Dict[str, Any]], section: str, metrics: Lis
             "bucketEdges": [_round(e) for e in edges.tolist()],
             "counts": [int(c) for c in counts.tolist()],
             "mean": _round(arr.mean()),
-            "usl": None,
-            "lsl": None,
+            "usl": _limit(metric, "usl"),
+            "lsl": _limit(metric, "lsl"),
         }
     return buckets
 
@@ -245,3 +248,8 @@ def _round(value: Any) -> Optional[float]:
     if value is None:
         return None
     return round(float(value), 4)
+
+
+def _limit(metric: str, key: str) -> Optional[float]:
+    limits = DEFAULT_LIMITS.get(metric)
+    return None if limits is None else limits.get(key)
